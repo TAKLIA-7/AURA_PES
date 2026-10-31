@@ -34,3 +34,4 @@ agents:
         resources: ["*"]
       - action: read_file
         resources: ["public/*"]
+

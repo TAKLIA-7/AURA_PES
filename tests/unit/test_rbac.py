@@ -95,3 +95,4 @@ class TestRBACManager:
         agent = AgentIdentity(agent_id="test_agent", role="tester")
         assert rbac.check_permission(agent, ToolAction.READ_FILE, "test/doc")
         assert not rbac.check_permission(agent, ToolAction.READ_FILE, "other/doc")
+

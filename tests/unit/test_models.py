@@ -458,3 +458,4 @@ class TestComputeRequestDigest:
         d1 = compute_request_digest("send_email", {"to": "a", "body": "b"}, "ag")
         d2 = compute_request_digest("send_email", {"body": "b", "to": "a"}, "ag")
         assert d1 == d2
+

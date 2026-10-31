@@ -174,8 +174,7 @@ class TestTaintEgressInteraction:
         assert decision.risk_level == RiskLevel.CRITICAL
 
     def test_untainted_egress_allowed(self, policy_engine, mailer_agent, make_context):
-        """Mailer sends email without taint → ALLOW (email recipient not in resource registry, but
-        the mailer has wildcard resource access for send_email)."""
+        """Mailer sends email without taint → ALLOW (mailer has wildcard email permission)."""
         req = AuraRequest(
             request_id="req-007",
             action=ToolAction.SEND_EMAIL,
@@ -184,13 +183,8 @@ class TestTaintEgressInteraction:
         )
         ctx = make_context(request=req)
         decision = policy_engine.evaluate(req, ctx)
-        # The resource existence rule will try to look up "friend@example.com"
-        # which won't be in the registry. This will BLOCK.
-        # This is correct: only registered targets are allowed.
-        # For send_email, we need to decide if the "to" field is a resource.
-        # Per design: resource check applies. Unregistered = BLOCK.
-        assert decision.decision == Decision.BLOCK
-        assert decision.reason_code == "RESOURCE_NOT_FOUND"
+        assert decision.decision == Decision.ALLOW
+        assert decision.risk_level == RiskLevel.NONE
 
 
 # ────────────────────────────────────────────────────────────────────

@@ -36,3 +36,4 @@ pytest
 - Exactly-once external side effects are not guaranteed.
 - SQLite/gateway availability is required; protected execution stops if
   required checks or durable recording fail.
+

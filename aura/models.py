@@ -314,9 +314,18 @@ class ApprovalStatus(str, Enum):
 
 
 class ApprovalRecord(BaseModel):
-    """Digest-bound approval request (fully implemented in Phase 6)."""
+    """Digest-bound persistent approval request.
+
+    Invariants:
+      - Bound to canonical action_digest of (action, params, agent_id).
+      - Executes stored_params, NEVER re-submitted parameters.
+      - Self-approval is forbidden (approver_id != requester_agent_id).
+      - Single-use: consumed atomically with the execution claim.
+    """
     approval_id: str = Field(..., min_length=1)
     request_id: str
+    action: ToolAction = ToolAction.CALL_API
+    stored_params: dict[str, Any] = Field(default_factory=dict)
     action_digest: str
     requester_agent_id: str
     approver_id: str | None = None
@@ -326,6 +335,11 @@ class ApprovalRecord(BaseModel):
     ttl_seconds: int = Field(default=3600, gt=0)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     resolved_at: datetime | None = None
+    consumed_at: datetime | None = None
+
+    def is_expired(self, now: datetime | None = None) -> bool:
+        current = now or datetime.now(timezone.utc)
+        return (current - self.created_at).total_seconds() > self.ttl_seconds
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -348,3 +362,4 @@ def compute_request_digest(
         default=str,
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+

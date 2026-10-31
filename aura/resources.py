@@ -60,3 +60,4 @@ class ResourceRegistry:
         """Return the sensitivity level for a resource, or ``None``."""
         info = self._resources.get(resource_id)
         return info.sensitivity if info else None
+

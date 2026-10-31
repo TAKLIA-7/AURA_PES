@@ -132,3 +132,4 @@ class RBACManager:
         if config is None:
             return []
         return list(config.permissions)
+

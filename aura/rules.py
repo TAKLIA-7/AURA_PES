@@ -157,6 +157,10 @@ class ResourceExistenceRule(Rule):
         request: AuraRequest,
         context: RunContext,
     ) -> RuleResult | None:
+        # Email recipients are communication endpoints, not cataloged resources
+        if request.action == ToolAction.SEND_EMAIL:
+            return None
+
         resource_id = _extract_resource_id(request)
         if not resource_id:
             # No resource to check (e.g., some call_api operations).
@@ -286,27 +290,57 @@ class ConfidentialEgressRule(Rule):
 
 
 class RateLimitRule(Rule):
-    """Enforce per-agent rate limits.
+    """Enforce per-agent and per-role rate limits.
 
-    Stub for Phase 1 — always passes.  Actual rate-limit state tracking
-    will be added in Phase 3 (persistence) and wired in Phase 2 (gateway).
+    Delegates to ``RateLimiter.check_and_consume()``.
+    If no RateLimiter is configured, returns None (pass-through).
     """
 
     def __init__(
         self,
         rule_id: str = "rate_limit",
         *,
+        rate_limiter: Any | None = None,
         enabled: bool = True,
     ) -> None:
         super().__init__(rule_id, enabled=enabled)
+        self._rate_limiter = rate_limiter
+
+    @property
+    def rate_limiter(self) -> Any | None:
+        return self._rate_limiter
+
+    @rate_limiter.setter
+    def rate_limiter(self, limiter: Any) -> None:
+        self._rate_limiter = limiter
 
     def evaluate(
         self,
         request: AuraRequest,
         context: RunContext,
     ) -> RuleResult | None:
-        # Stub: rate limiting requires persistence (Phase 3).
-        return None
+        if self._rate_limiter is None:
+            return None
+
+        allowed, reason = self._rate_limiter.check_and_consume(
+            request.agent.agent_id, request.agent.role
+        )
+        if not allowed:
+            return RuleResult(
+                rule_id=self.rule_id,
+                decision=Decision.BLOCK,
+                risk_level=RiskLevel.MEDIUM,
+                reason_code="RATE_LIMIT_EXCEEDED",
+                reason_detail=reason,
+            )
+
+        return RuleResult(
+            rule_id=self.rule_id,
+            decision=Decision.ALLOW,
+            risk_level=RiskLevel.NONE,
+            reason_code="RATE_LIMIT_OK",
+            reason_detail="Within rate limits",
+        )
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -334,3 +368,4 @@ def _extract_resource_id(request: AuraRequest) -> str:
     elif action == ToolAction.CALL_API:
         return str(params.get("op", ""))
     return ""
+

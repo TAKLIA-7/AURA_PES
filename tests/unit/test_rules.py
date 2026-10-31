@@ -321,3 +321,4 @@ class TestRuleEnabled:
     def test_disabled_rule(self, rbac_manager, make_request, make_context):
         rule = PermissionCheckRule(rbac_manager=rbac_manager, enabled=False)
         assert rule.enabled is False
+
