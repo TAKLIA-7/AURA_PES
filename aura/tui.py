@@ -161,6 +161,13 @@ TabPane {
     margin: 1 0;
 }
 
+.query_output_card {
+    background: #0f1c2e;
+    border: round #38bdf8;
+    padding: 1 2;
+    margin: 1 0;
+}
+
 #prompt_area {
     height: auto;
     background: #161b22;
@@ -361,6 +368,7 @@ class AuraApp(App):
                             yield Button("Demo 1: File Read", id="btn_demo1", classes="action_btn")
                             yield Button("Demo 2: Data Leak Block", id="btn_demo2", classes="action_btn")
                             yield Button("Demo 3: Approval Query", id="btn_demo3", classes="action_btn")
+                            yield Button("Demo 4: Query Analytics", id="btn_demo4", classes="action_btn")
                             yield Button("Clear View", id="btn_clear", classes="action_btn")
 
             # Tab 2: Security Audit Logs
@@ -463,6 +471,8 @@ class AuraApp(App):
             self.dispatch_user_task("Read confidential financials doc:confidential_financials and email summary to auditor@competitor.com")
         elif btn_id == "btn_demo3":
             self.dispatch_user_task("Run write query insert_audit_note with note 'Emergency security patch applied'")
+        elif btn_id == "btn_demo4":
+            self.dispatch_user_task("Run database query get_revenue_summary for 2024")
         elif btn_id == "btn_clear":
             history = self.query_one("#chat_history", VerticalScroll)
             history.remove_children()
@@ -562,6 +572,36 @@ class AuraApp(App):
                 f"[dim]Risk: {r.risk_level.value}  |  Gateway Latency: {r.gateway_latency_ms:.1f}ms[/dim]"
             )
             history.mount(Static(card_content, classes=card_class))
+
+            # Display Output Data directly on Dashboard for each prompt
+            if r.decision == Decision.ALLOW and r.execution_status == ExecutionStatus.COMPLETED and r.result_data:
+                output_body = ""
+                header_title = "[bold cyan][QUERY / TOOL OUTPUT][/bold cyan]"
+
+                if r.tool_name == "run_query" and isinstance(r.result_data, dict):
+                    q_name = r.result_data.get("query_name", "query")
+                    rows = r.result_data.get("results", [])
+                    header_title = f"[bold cyan][DATABASE QUERY OUTPUT: {q_name}][/bold cyan] [dim]({len(rows)} row(s) returned)[/dim]"
+                    if rows:
+                        output_body = json.dumps(rows, indent=2)
+                    else:
+                        output_body = "(Empty result set)"
+
+                elif r.tool_name == "read_file" and isinstance(r.result_data, dict):
+                    doc_id = r.result_data.get("doc_id", "document")
+                    content = r.result_data.get("content", "")
+                    header_title = f"[bold cyan][DOCUMENT CONTENT: {doc_id}][/bold cyan]"
+                    output_body = content
+
+                elif isinstance(r.result_data, (dict, list)):
+                    header_title = f"[bold cyan][OPERATION OUTPUT: {r.tool_name}][/bold cyan]"
+                    output_body = json.dumps(r.result_data, indent=2, default=str)
+                else:
+                    header_title = f"[bold cyan][OPERATION OUTPUT: {r.tool_name}][/bold cyan]"
+                    output_body = str(r.result_data)
+
+                output_card = f"{header_title}\n\n{output_body}"
+                history.mount(Static(output_card, classes="query_output_card"))
 
         # Render final agent response
         if final_response:

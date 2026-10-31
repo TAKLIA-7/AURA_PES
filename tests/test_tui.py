@@ -92,3 +92,46 @@ async def test_tui_enforcement_rendering():
         combined = " ".join(card_texts)
         assert "read_file" in combined or "AURA AUTHORIZED" in combined
         assert "Q3 revenue" in combined
+
+
+@pytest.mark.asyncio
+async def test_tui_query_output_card_displayed():
+    """Verify that query result data is explicitly displayed on the dashboard."""
+    app = AuraApp()
+    async with app.run_test() as pilot:
+        query_gw_result = GatewayResult(
+            request_id="req_sql_456",
+            trace_id="tr_sql_456",
+            decision=Decision.ALLOW,
+            execution_status=ExecutionStatus.COMPLETED,
+            risk_level=RiskLevel.LOW,
+            tool_name="run_query",
+            result_data={
+                "query_name": "get_revenue_summary",
+                "results": [
+                    {"quarter": "Q1", "total": 520000},
+                    {"quarter": "Q2", "total": 610000},
+                ],
+                "row_count": 2,
+            },
+        )
+        fake_res = {
+            "aura_results": [query_gw_result],
+            "final_response": "Q1 and Q2 revenue amounts to $1.13M.",
+        }
+
+        status_widget = Static("status", id="temp_status")
+        chat_history = app.query_one("#chat_history")
+        chat_history.mount(status_widget)
+
+        app._handle_agent_completed(fake_res, status_widget)
+        await pilot.pause()
+
+        # Verify output card is mounted
+        output_cards = chat_history.query(".query_output_card")
+        assert len(output_cards) == 1
+        output_text = str(output_cards[0].render())
+        assert "DATABASE QUERY OUTPUT: get_revenue_summary" in output_text
+        assert "520000" in output_text
+        assert "610000" in output_text
+

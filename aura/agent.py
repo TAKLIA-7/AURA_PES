@@ -349,10 +349,27 @@ class AuraMultiAgentSystem:
                 elif r.decision == Decision.APPROVAL:
                     summaries.append(f"Operation '{r.tool_name}' requires human approval (ID: {r.approval_id}).")
                 elif r.decision == Decision.ALLOW and r.execution_status == ExecutionStatus.COMPLETED:
-                    summaries.append(f"Operation '{r.tool_name}' completed successfully.")
+                    if r.tool_name == "run_query" and isinstance(r.result_data, dict):
+                        q_name = r.result_data.get("query_name", "query")
+                        rows = r.result_data.get("results", [])
+                        summaries.append(
+                            f"Query '{q_name}' executed successfully ({len(rows)} row(s) returned):\n"
+                            f"{json.dumps(rows, indent=2)}"
+                        )
+                    elif r.tool_name == "read_file" and isinstance(r.result_data, dict):
+                        doc_id = r.result_data.get("doc_id", "document")
+                        content = r.result_data.get("content", "")
+                        summaries.append(f"Document '{doc_id}' read successfully:\n{content}")
+                    elif r.result_data:
+                        summaries.append(
+                            f"Operation '{r.tool_name}' executed with output:\n"
+                            f"{json.dumps(r.result_data, indent=2, default=str)}"
+                        )
+                    else:
+                        summaries.append(f"Operation '{r.tool_name}' completed successfully.")
                 else:
                     summaries.append(f"Operation '{r.tool_name}': {r.decision.value} ({r.execution_status.value})")
-            response_text = "Execution completed:\n" + "\n".join(f"- {s}" for s in summaries)
+            response_text = "Execution completed:\n" + "\n\n".join(summaries)
 
         # If Gemini LLM is available, use it to synthesize a comprehensive response
         if self.llm and results:
@@ -361,8 +378,9 @@ class AuraMultiAgentSystem:
                 f"User task: {state.get('task', '')}\n\n"
                 f"Authoritative AURA Execution Results:\n"
                 f"{json.dumps([r.model_dump(include={'tool_name', 'decision', 'execution_status', 'reason_code', 'reason', 'result_data'}) for r in results], default=str)}\n\n"
-                f"Provide a concise, helpful response to the user based STRICTLY on the execution results.\n"
-                f"CRITICAL SECURITY RULES:\n"
+                f"Provide a clear, helpful response to the user based STRICTLY on the execution results.\n"
+                f"MANDATORY INSTRUCTIONS:\n"
+                f"- For queries and file reads, ALWAYS present the returned data and values clearly in your answer.\n"
                 f"- If an operation was BLOCKED, clearly report it was blocked and why. Never claim it succeeded.\n"
                 f"- If an operation requires APPROVAL, state that it is pending human approval.\n"
                 f"- Only report success if execution_status is COMPLETED.\n"
