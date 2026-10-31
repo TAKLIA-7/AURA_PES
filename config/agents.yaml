@@ -1,0 +1,36 @@
+# AURA Agent Definitions & RBAC Configuration
+# Version is used to bind audit entries to the active config.
+version: "1.0"
+
+agents:
+  admin_agent:
+    role: admin
+    description: "Full administrative access to all tools and resources"
+    permissions:
+      - action: "*"
+        resources: ["*"]
+
+  analyst_agent:
+    role: analyst
+    description: "Read-only analyst with query access to internal resources"
+    permissions:
+      - action: read_file
+        resources: ["public/*", "internal/*"]
+      - action: run_query
+        resources: ["reports/*", "analytics/*"]
+
+  reader_agent:
+    role: reader
+    description: "Public read-only access only"
+    permissions:
+      - action: read_file
+        resources: ["public/*"]
+
+  mailer_agent:
+    role: mailer
+    description: "Can send emails and read public files"
+    permissions:
+      - action: send_email
+        resources: ["*"]
+      - action: read_file
+        resources: ["public/*"]

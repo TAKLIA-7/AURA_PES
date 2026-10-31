@@ -1,0 +1,50 @@
+# AURA Policy Configuration
+# Deterministic rules evaluated in priority order.
+# A BLOCK from any rule is final and cannot be overridden.
+version: "1.0"
+
+policy:
+  name: "AURA Default Policy"
+  description: "Default security policy for AURA enforcement gateway"
+
+  # Rules are evaluated in priority order (lowest number = highest priority).
+  # Each rule has exactly one responsibility.
+  rules:
+    - id: rbac_check
+      type: permission_check
+      priority: 1
+      enabled: true
+      description: "Verify agent has RBAC permission for the requested action and resource"
+
+    - id: resource_exists
+      type: resource_existence
+      priority: 2
+      enabled: true
+      description: "Verify the target resource exists in the trusted registry"
+
+    - id: taint_propagation
+      type: taint_propagation
+      priority: 3
+      enabled: true
+      description: "Apply run-level taint after reading confidential resources"
+
+    - id: confidential_egress
+      type: confidential_egress
+      priority: 4
+      enabled: true
+      description: "Block sending tainted or confidential data via external channels"
+
+    - id: rate_limit
+      type: rate_limit
+      priority: 5
+      enabled: true
+      description: "Enforce per-agent and per-role rate limits"
+
+  # Rate limits (requests per minute)
+  rate_limits:
+    default: 60
+    per_role:
+      admin: 120
+      analyst: 60
+      reader: 30
+      mailer: 20

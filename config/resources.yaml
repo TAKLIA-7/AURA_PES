@@ -1,0 +1,59 @@
+# AURA Resource Registry Configuration
+# Trusted source for resource existence and sensitivity classification.
+version: "1.0"
+
+resources:
+  # ── Public files ──
+  public/readme:
+    sensitivity: public
+    resource_type: file
+    description: "Public README document"
+
+  public/faq:
+    sensitivity: public
+    resource_type: file
+    description: "Public FAQ document"
+
+  # ── Internal files ──
+  internal/report_q4:
+    sensitivity: internal
+    resource_type: file
+    description: "Internal quarterly report"
+
+  internal/roadmap:
+    sensitivity: internal
+    resource_type: file
+    description: "Internal product roadmap"
+
+  # ── Confidential files ──
+  confidential/hr_records:
+    sensitivity: confidential
+    resource_type: file
+    description: "HR employee records — contains PII"
+
+  confidential/financial_data:
+    sensitivity: confidential
+    resource_type: file
+    description: "Financial data — restricted access"
+
+  # ── Queries ──
+  reports/monthly_summary:
+    sensitivity: internal
+    resource_type: query
+    description: "Monthly summary report query"
+
+  analytics/user_stats:
+    sensitivity: internal
+    resource_type: query
+    description: "User statistics analytics query"
+
+  # ── API operations ──
+  api/public_status:
+    sensitivity: public
+    resource_type: api
+    description: "Public API health check"
+
+  api/internal_deploy:
+    sensitivity: confidential
+    resource_type: api
+    description: "Internal deployment trigger — sensitive"
