@@ -1,36 +1,102 @@
-# AURA Agent Definitions & RBAC Configuration
-# Version is used to bind audit entries to the active config.
-version: "1.0"
+# AURA Agent Registry and RBAC Configuration
+# Agent identities and roles are TRUSTED — assigned by the gateway, never self-declared.
 
 agents:
+  research_agent:
+    id: "research_agent"
+    role: "research"
+    description: "Reads and summarizes authorized documents"
+    allowed_tools:
+      - "read_file"
+    allowed_resources:
+      - "doc:*"
+    allowed_operations:
+      - "read"
+    rate_limits:
+      requests_per_minute: 30
+      max_concurrent: 5
+
+  sql_agent:
+    id: "sql_agent"
+    role: "sql"
+    description: "Executes approved allowlisted SQL queries"
+    allowed_tools:
+      - "run_query"
+    allowed_resources:
+      - "db:analytics"
+      - "db:reporting"
+    allowed_operations:
+      - "read"
+      - "query"
+    rate_limits:
+      requests_per_minute: 20
+      max_concurrent: 3
+
+  email_agent:
+    id: "email_agent"
+    role: "email"
+    description: "Sends emails subject to policy enforcement"
+    allowed_tools:
+      - "send_email"
+      - "read_file"
+    allowed_resources:
+      - "doc:*"
+      - "email:outbound"
+    allowed_operations:
+      - "read"
+      - "send"
+    rate_limits:
+      requests_per_minute: 10
+      max_concurrent: 2
+
   admin_agent:
-    role: admin
-    description: "Full administrative access to all tools and resources"
-    permissions:
-      - action: "*"
-        resources: ["*"]
+    id: "admin_agent"
+    role: "admin"
+    description: "Performs explicitly permitted administrative operations"
+    allowed_tools:
+      - "read_file"
+      - "run_query"
+      - "call_api"
+      - "send_email"
+    allowed_resources:
+      - "doc:*"
+      - "db:*"
+      - "api:admin"
+    allowed_operations:
+      - "read"
+      - "query"
+      - "admin"
+    rate_limits:
+      requests_per_minute: 15
+      max_concurrent: 2
 
-  analyst_agent:
-    role: analyst
-    description: "Read-only analyst with query access to internal resources"
-    permissions:
-      - action: read_file
-        resources: ["public/*", "internal/*"]
-      - action: run_query
-        resources: ["reports/*", "analytics/*"]
+# Global rate limits (apply to all agents)
+global_rate_limits:
+  requests_per_minute: 60
+  max_concurrent: 10
+  max_agent_loop_steps: 8
+  max_request_duration_seconds: 60
 
-  reader_agent:
-    role: reader
-    description: "Public read-only access only"
-    permissions:
-      - action: read_file
-        resources: ["public/*"]
+# Approver registry
+approvers:
+  admin_user:
+    id: "admin_user"
+    role: "approver"
+    # Secret hash (SHA-256 of "approve-secret-123" for demo)
+    secret_hash: "becc9a320b50d8b7a06dc693777edd6844d0df6209e28c00c69cdba2907d679c"
+    can_approve_for:
+      - "email_agent"
+      - "sql_agent"
+      - "admin_agent"
+      - "research_agent"
 
-  mailer_agent:
-    role: mailer
-    description: "Can send emails and read public files"
-    permissions:
-      - action: send_email
-        resources: ["*"]
-      - action: read_file
-        resources: ["public/*"]
+  security_officer:
+    id: "security_officer"
+    role: "security_approver"
+    secret_hash: "becc9a320b50d8b7a06dc693777edd6844d0df6209e28c00c69cdba2907d679c"
+    can_approve_for:
+      - "admin_agent"
+      - "email_agent"
+      - "sql_agent"
+      - "research_agent"
+

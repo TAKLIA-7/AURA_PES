@@ -1,26 +1,52 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "aura"
 version = "0.1.0"
-description = "AURA — AI-agent security and execution-enforcement layer"
-requires-python = ">=3.12"
+description = "AURA — AI Agent Security, Authorization, Execution Enforcement, and Audit Platform"
+requires-python = ">=3.11"
 dependencies = [
-    "pydantic>=2.0,<3.0",
+    "pydantic>=2.5,<3",
     "pyyaml>=6.0",
+    "rich>=13.0",
+    "httpx>=0.25",
+    "langchain>=0.3,<1",
+    "langchain-core>=0.3,<1",
+    "langgraph>=0.2,<1",
+    "langchain-google-genai>=2.0,<3",
+    "google-generativeai>=0.8",
+    "textual>=0.70",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
+    "pytest>=7.4",
     "pytest-asyncio>=0.23",
+    "pytest-cov>=4.1",
+    "ruff>=0.4",
+]
+openrouter = [
+    "langchain-openai>=0.2",
 ]
 
-[build-system]
-requires = ["setuptools>=68.0"]
-build-backend = "setuptools.build_meta"
+[project.scripts]
+aura = "aura.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["aura*"]
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = ["."]
+markers = [
+    "security: adversarial security tests",
+    "concurrency: race-condition and concurrent-claim tests",
+    "failure: failure-injection tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+

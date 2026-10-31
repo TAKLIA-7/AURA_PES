@@ -1,50 +1,92 @@
 # AURA Policy Configuration
-# Deterministic rules evaluated in priority order.
-# A BLOCK from any rule is final and cannot be overridden.
-version: "1.0"
+# Version: 1.0.0
 
-policy:
-  name: "AURA Default Policy"
-  description: "Default security policy for AURA enforcement gateway"
+policy_version: "1.0.0"
 
-  # Rules are evaluated in priority order (lowest number = highest priority).
-  # Each rule has exactly one responsibility.
-  rules:
-    - id: rbac_check
-      type: permission_check
-      priority: 1
-      enabled: true
-      description: "Verify agent has RBAC permission for the requested action and resource"
+# Enforcement Mode:
+# "enforce"   - Standard security mode: enforces BLOCK and APPROVAL
+# "permissive" - Monitor / Audit-only mode: allows all actions through while auditing findings
+enforcement_mode: "enforce"
 
-    - id: resource_exists
-      type: resource_existence
-      priority: 2
-      enabled: true
-      description: "Verify the target resource exists in the trusted registry"
+# Deterministic policy rules (evaluated in order)
+rules:
+  - id: "RULE_AGENT_AUTH"
+    description: "Verify agent is authenticated and authorized"
+    enabled: true
+    priority: 10
 
-    - id: taint_propagation
-      type: taint_propagation
-      priority: 3
-      enabled: true
-      description: "Apply run-level taint after reading confidential resources"
+  - id: "RULE_RESOURCE_ACCESS"
+    description: "Verify resource exists and agent has access"
+    enabled: true
+    priority: 20
 
-    - id: confidential_egress
-      type: confidential_egress
-      priority: 4
-      enabled: true
-      description: "Block sending tainted or confidential data via external channels"
+  - id: "RULE_CONFIDENTIAL_EGRESS"
+    description: "Block confidential data sent to external destinations"
+    enabled: true
+    priority: 30
 
-    - id: rate_limit
-      type: rate_limit
-      priority: 5
-      enabled: true
-      description: "Enforce per-agent and per-role rate limits"
+  - id: "RULE_SENSITIVE_OPS"
+    description: "Require approval for sensitive operations"
+    enabled: true
+    priority: 40
 
-  # Rate limits (requests per minute)
-  rate_limits:
-    default: 60
-    per_role:
-      admin: 120
-      analyst: 60
-      reader: 30
-      mailer: 20
+  - id: "RULE_DESTINATION_RESTRICT"
+    description: "Restrict destinations based on data sensitivity"
+    enabled: true
+    priority: 50
+
+  - id: "RULE_EXECUTION_CONSTRAINTS"
+    description: "Enforce execution constraints (size, rate, format)"
+    enabled: true
+    priority: 60
+
+# Sensitive operations that require human approval
+sensitive_operations:
+  - "send_email"
+  - "call_api"
+  - "run_query"
+
+# Operations that always require approval regardless of other rules
+always_require_approval:
+  - tool: "call_api"
+    operations: ["delete", "update_permissions"]
+
+# External domain blocklist
+blocked_destinations:
+  - "competitor.com"
+  - "untrusted-external.com"
+  - "leak-site.org"
+
+# Allowed external domains (allowlist mode for email)
+allowed_email_domains:
+  - "company.com"
+  - "partner.org"
+  - "trusted-vendor.com"
+
+# Internal domains
+internal_domains:
+  - "company.com"
+  - "internal.company.com"
+
+# Maximum request size in bytes
+max_request_size_bytes: 1048576  # 1 MB
+
+# Maximum parameter value length
+max_param_value_length: 10000
+
+# JEV configuration
+jev:
+  enabled: true
+  timeout_seconds: 5
+  max_attempts: 2
+  max_context_tokens: 4096
+  provider: "openrouter"  # "mock", "gemini", "openrouter"
+  model: "google/gemini-2.5-flash"
+
+# Taint tracking
+taint:
+  enabled: true
+  confidential_sensitivity_levels:
+    - "CONFIDENTIAL"
+    - "TOP_SECRET"
+

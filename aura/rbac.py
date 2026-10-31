@@ -1,134 +1,154 @@
-"""AURA Role-Based Access Control (RBAC).
+"""
+AURA RBAC Enforcer — Role-Based Access Control for agent tool/resource authorization.
 
-RBAC applies to AI agents.  Each agent has a trusted identity, assigned
-role, and explicit tool/resource permissions.
+Enforces that only trusted, registry-declared agents can invoke specific tools and
+access specific resources. All lookups use the server-side trusted registry — never
+agent-self-declared claims.
 
-Deny-by-default: if no permission entry matches, access is denied.
-Wildcard ``"*"`` matches any action or resource.
-Resource patterns support trailing glob: ``"public/*"`` matches
-``"public/readme"``, ``"public/faq"``, etc.
+Key invariants
+--------------
+* Agent identity comes from the trusted config, not from the request.
+* Wildcard resource patterns (e.g. ``"doc:*"``) are matched with :pyfunc:`fnmatch.fnmatch`.
+* Self-approval is explicitly forbidden: an agent cannot approve its own actions.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from fnmatch import fnmatch
-from pathlib import Path
-from typing import Any
+import fnmatch
+from typing import Optional
 
-import yaml
-
-from aura.models import AgentIdentity, ToolAction
+from aura.models import AgentConfig, Decision, RiskLevel, RuleResult
 
 
-@dataclass(frozen=True)
-class PermissionEntry:
-    """A single permission grant: action + resource patterns."""
-    action: str  # ToolAction value or "*"
-    resources: list[str] = field(default_factory=list)  # glob patterns
+class RBACEnforcer:
+    """Deterministic RBAC check against a trusted agent registry.
 
-
-@dataclass(frozen=True)
-class AgentConfig:
-    """RBAC configuration for a single agent."""
-    agent_id: str
-    role: str
-    description: str = ""
-    permissions: list[PermissionEntry] = field(default_factory=list)
-
-
-class RBACManager:
-    """Manages agent RBAC from a YAML configuration.
-
-    Usage::
-
-        rbac = RBACManager.from_yaml("config/agents.yaml")
-        allowed = rbac.check_permission(agent, ToolAction.READ_FILE, "public/readme")
+    Parameters
+    ----------
+    agents_config:
+        Mapping of ``agent_id → AgentConfig`` loaded from ``agents.yaml``.
+        This is the *only* source of truth for identity and permissions.
     """
 
-    def __init__(self, agents: dict[str, AgentConfig]) -> None:
-        self._agents = agents
+    # ── Reason codes ────────────────────────────
+    _AGENT_NOT_FOUND = "AGENT_NOT_FOUND"
+    _TOOL_NOT_PERMITTED = "TOOL_NOT_PERMITTED"
+    _RESOURCE_NOT_PERMITTED = "RESOURCE_NOT_PERMITTED"
+    _RBAC_AUTHORIZED = "RBAC_AUTHORIZED"
+    _SELF_APPROVAL_DENIED = "SELF_APPROVAL_DENIED"
 
-    # ── Factory ──────────────────────────────────────────────────
+    _RULE_ID = "rbac_check"
 
-    @classmethod
-    def from_yaml(cls, path: str | Path) -> RBACManager:
-        """Load RBAC configuration from a YAML file."""
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        return cls.from_dict(data)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> RBACManager:
-        """Build an RBACManager from a parsed YAML dict."""
-        agents: dict[str, AgentConfig] = {}
-        for agent_id, agent_data in data.get("agents", {}).items():
-            permissions = []
-            for perm in agent_data.get("permissions", []):
-                permissions.append(
-                    PermissionEntry(
-                        action=perm["action"],
-                        resources=perm.get("resources", []),
-                    )
-                )
-            agents[agent_id] = AgentConfig(
-                agent_id=agent_id,
-                role=agent_data.get("role", ""),
-                description=agent_data.get("description", ""),
-                permissions=permissions,
+    def __init__(self, agents_config: dict[str, AgentConfig]) -> None:
+        if not isinstance(agents_config, dict):
+            raise TypeError(
+                f"agents_config must be a dict[str, AgentConfig], got {type(agents_config).__name__}"
             )
-        return cls(agents)
+        self._agents: dict[str, AgentConfig] = dict(agents_config)
 
-    # ── Queries ──────────────────────────────────────────────────
-
-    def get_agent_config(self, agent_id: str) -> AgentConfig | None:
-        """Look up the configuration for a given agent ID."""
-        return self._agents.get(agent_id)
+    # ── Public API ──────────────────────────────
 
     def check_permission(
         self,
-        agent: AgentIdentity,
-        action: ToolAction,
-        resource_id: str | None = None,
-    ) -> bool:
-        """Check whether *agent* is permitted to perform *action* on *resource_id*.
+        agent_id: str,
+        tool_name: str,
+        resource_id: Optional[str] = None,
+    ) -> RuleResult:
+        """Check if *agent_id* is allowed to invoke *tool_name* on *resource_id*.
 
-        Returns ``True`` only if an explicit permission entry matches.
-        Deny-by-default: unknown agents or unmatched actions are denied.
+        Evaluation order
+        ~~~~~~~~~~~~~~~~
+        1. Look up agent in the trusted registry.
+        2. Verify *tool_name* is in the agent's ``allowed_tools``.
+        3. If *resource_id* is provided, verify it matches at least one entry
+           in the agent's ``allowed_resources`` (supports shell-style wildcards
+           like ``"doc:*"``).
+
+        Returns
+        -------
+        RuleResult
+            ``Decision.ALLOW`` with reason ``RBAC_AUTHORIZED`` when all checks
+            pass; ``Decision.BLOCK`` with the first failing reason code otherwise.
         """
-        config = self._agents.get(agent.agent_id)
-        if config is None:
-            return False
+        # 1. Agent existence ---------------------------------------------------
+        agent = self._agents.get(agent_id)
+        if agent is None:
+            return RuleResult(
+                rule_id=self._RULE_ID,
+                decision=Decision.BLOCK,
+                reason_code=self._AGENT_NOT_FOUND,
+                risk_level=RiskLevel.HIGH,
+                metadata={"agent_id": agent_id},
+            )
 
-        # Ensure the agent's claimed role matches config.
-        if config.role != agent.role:
-            return False
+        # 2. Tool permission ---------------------------------------------------
+        if tool_name not in agent.allowed_tools:
+            return RuleResult(
+                rule_id=self._RULE_ID,
+                decision=Decision.BLOCK,
+                reason_code=self._TOOL_NOT_PERMITTED,
+                risk_level=RiskLevel.MEDIUM,
+                metadata={
+                    "agent_id": agent_id,
+                    "tool_name": tool_name,
+                    "allowed_tools": agent.allowed_tools,
+                },
+            )
 
-        action_value = action.value if isinstance(action, ToolAction) else str(action)
+        # 3. Resource permission (optional) ------------------------------------
+        if resource_id is not None:
+            if not self._resource_matches(resource_id, agent.allowed_resources):
+                return RuleResult(
+                    rule_id=self._RULE_ID,
+                    decision=Decision.BLOCK,
+                    reason_code=self._RESOURCE_NOT_PERMITTED,
+                    risk_level=RiskLevel.HIGH,
+                    metadata={
+                        "agent_id": agent_id,
+                        "resource_id": resource_id,
+                        "allowed_resources": agent.allowed_resources,
+                    },
+                )
 
-        for perm in config.permissions:
-            # Check action match.
-            if perm.action != "*" and perm.action != action_value:
-                continue
+        # 4. All checks passed -------------------------------------------------
+        return RuleResult(
+            rule_id=self._RULE_ID,
+            decision=Decision.ALLOW,
+            reason_code=self._RBAC_AUTHORIZED,
+            risk_level=RiskLevel.LOW,
+            metadata={
+                "agent_id": agent_id,
+                "tool_name": tool_name,
+                "resource_id": resource_id,
+            },
+        )
 
-            # Check resource match.
-            if resource_id is None or resource_id == "":
-                # No resource to check — action-level permission suffices.
+    def get_agent(self, agent_id: str) -> Optional[AgentConfig]:
+        """Return the trusted ``AgentConfig`` for *agent_id*, or ``None``."""
+        return self._agents.get(agent_id)
+
+    def validate_no_self_approval(self, agent_id: str, approver_id: str) -> bool:
+        """Ensure an agent cannot approve its own actions.
+
+        Returns
+        -------
+        bool
+            ``True`` if the identities differ (valid — no self-approval).
+            ``False`` if *agent_id* == *approver_id* (self-approval attempt).
+        """
+        return agent_id != approver_id
+
+    # ── Private helpers ─────────────────────────
+
+    @staticmethod
+    def _resource_matches(resource_id: str, allowed_patterns: list[str]) -> bool:
+        """Return ``True`` if *resource_id* matches any pattern in *allowed_patterns*.
+
+        Patterns support shell-style wildcards via :pyfunc:`fnmatch.fnmatch`:
+        ``"doc:*"`` matches ``"doc:readme"``, ``"doc:spec/v2"``, etc.
+        An exact string match is always accepted.
+        """
+        for pattern in allowed_patterns:
+            if fnmatch.fnmatch(resource_id, pattern):
                 return True
-
-            for pattern in perm.resources:
-                if pattern == "*" or fnmatch(resource_id, pattern):
-                    return True
-
         return False
-
-    def list_agents(self) -> list[str]:
-        """Return all configured agent IDs."""
-        return list(self._agents.keys())
-
-    def list_permissions(self, agent_id: str) -> list[PermissionEntry]:
-        """Return the permission entries for a given agent."""
-        config = self._agents.get(agent_id)
-        if config is None:
-            return []
-        return list(config.permissions)

@@ -1,1 +1,2 @@
-"""JEV — Judgement-Evaluation-Verification providers."""
+"""AURA JEV (Judgment and Evaluation) package."""
+

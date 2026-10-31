@@ -1,160 +1,350 @@
-"""AURA Policy Engine.
+"""
+AURA Policy Engine — deterministic policy evaluation with monotone enforcement.
 
-Evaluates an ordered list of deterministic rules against a request.
+The ``PolicyEngine`` loads the three YAML configs (policy, agents, resources),
+runs every enabled rule in priority order, and combines their results using a
+monotone lattice:
 
-Invariants:
-  - A ``BLOCK`` from any rule is final — short-circuits evaluation.
-  - Risk levels combine monotonically: ``final = max(all rule risks)``.
-  - JEV may raise risk, never lower it.
-  - Policy version is recorded for audit binding.
+    ALLOW < DEFER < APPROVAL < BLOCK
+
+A BLOCK from any rule is final and cannot be overridden by the JEV or by
+downstream rules.  JEV can only *raise* risk — never lower it.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import os
+from pathlib import Path
+from typing import Any, Optional
 
-from aura.models import Decision, PolicyDecision, RiskLevel
+import yaml
 
-if TYPE_CHECKING:
-    from aura.models import AuraRequest, RunContext
-    from aura.rules import Rule
+from aura.models import (
+    AgentConfig,
+    Decision,
+    JEVResult,
+    PolicyResult,
+    ResourceEntry,
+    RiskLevel,
+    RuleResult,
+    RunContext,
+    SQLQueryDef,
+    ToolRequest,
+)
+from aura.rules import get_all_rules
 
+
+# ──────────────────────────────────────────────
+# Decision lattice helpers
+# ──────────────────────────────────────────────
+
+_DECISION_ORDER: dict[Decision, int] = {
+    Decision.ALLOW: 0,
+    Decision.DEFER: 1,
+    Decision.APPROVAL: 2,
+    Decision.BLOCK: 3,
+}
+
+_RISK_ORDER: dict[RiskLevel, int] = {
+    RiskLevel.LOW: 0,
+    RiskLevel.MEDIUM: 1,
+    RiskLevel.HIGH: 2,
+    RiskLevel.CRITICAL: 3,
+}
+
+
+def _max_decision(a: Decision, b: Decision) -> Decision:
+    """Return the more restrictive of two decisions."""
+    return a if _DECISION_ORDER[a] >= _DECISION_ORDER[b] else b
+
+
+def _max_risk(a: RiskLevel, b: RiskLevel) -> RiskLevel:
+    """Return the higher of two risk levels."""
+    return a if _RISK_ORDER[a] >= _RISK_ORDER[b] else b
+
+
+# ──────────────────────────────────────────────
+# YAML loader helper
+# ──────────────────────────────────────────────
+
+def _load_yaml(path: str | Path) -> dict[str, Any]:
+    """Load a YAML file, raising on missing file or parse error."""
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+    with open(path, "r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected YAML mapping at top level in {path}")
+    return data
+
+
+# ──────────────────────────────────────────────
+# PolicyEngine
+# ──────────────────────────────────────────────
 
 class PolicyEngine:
-    """Ordered deterministic rule evaluator.
+    """Deterministic policy engine for AURA.
 
-    Usage::
+    Loads the three YAML configuration files, exposes helper accessors for
+    agent / resource / query lookups, evaluates every enabled rule in
+    priority order, and combines the results using monotone enforcement.
 
-        engine = PolicyEngine(rules=[rbac_rule, resource_rule, ...], version="1.0")
-        decision = engine.evaluate(request, context)
+    Parameters
+    ----------
+    config_path:
+        Path to ``policy.yaml``, relative to the project root or absolute.
+        The *agents.yaml* and *resources.yaml* are expected to reside in
+        the same directory.
     """
 
-    def __init__(self, rules: list[Rule], version: str = "1.0") -> None:
-        self._rules = rules
-        self._version = version
+    def __init__(self, config_path: str = "config/policy.yaml") -> None:
+        # Resolve the config directory relative to the project root.
+        # The project root is assumed to be two levels above the aura package.
+        project_root = Path(__file__).resolve().parent.parent
+        config_dir = (project_root / config_path).parent
+
+        policy_path = project_root / config_path
+        agents_path = config_dir / "agents.yaml"
+        resources_path = config_dir / "resources.yaml"
+
+        self._policy_cfg: dict[str, Any] = _load_yaml(policy_path)
+        self._agents_cfg: dict[str, Any] = _load_yaml(agents_path)
+        self._resources_cfg: dict[str, Any] = _load_yaml(resources_path)
+
+        # Build a unified config dict that rules receive
+        self._merged_config: dict[str, Any] = {
+            **self._policy_cfg,
+            "agents": self._agents_cfg.get("agents", {}),
+            "resources": self._resources_cfg.get("resources", {}),
+            "sql_queries": self._resources_cfg.get("sql_queries", {}),
+            "approvers": self._agents_cfg.get("approvers", {}),
+        }
+
+        # Index enabled rules from policy.yaml by id for fast lookup
+        self._enabled_rule_ids: set[str] = set()
+        for rule_entry in self._policy_cfg.get("rules", []):
+            if rule_entry.get("enabled", True):
+                self._enabled_rule_ids.add(rule_entry["id"])
+
+    # ── Public properties ────────────────────
 
     @property
-    def version(self) -> str:
-        return self._version
+    def policy_version(self) -> str:
+        """Return the policy version string from ``policy.yaml``."""
+        return str(self._policy_cfg.get("policy_version", "unknown"))
 
     @property
-    def rules(self) -> list[Rule]:
-        return list(self._rules)
+    def resources_config(self) -> dict[str, Any]:
+        """Return the raw resources configuration mapping."""
+        return self._resources_cfg
+
+    @property
+    def agents_config(self) -> dict[str, Any]:
+        """Return the raw agents configuration mapping."""
+        return self._agents_cfg
+
+    @property
+    def policy_config(self) -> dict[str, Any]:
+        """Return the raw policy configuration mapping."""
+        return self._policy_cfg
+
+    @property
+    def agents(self) -> dict[str, AgentConfig]:
+        """Return trusted agent configurations indexed by agent_id."""
+        return {
+            k: AgentConfig(**v) if isinstance(v, dict) else v
+            for k, v in self._agents_cfg.get("agents", {}).items()
+        }
+
+    # ── Config accessors ─────────────────────
+
+    def get_agent_config(self, agent_id: str) -> Optional[AgentConfig]:
+        """Look up an agent by id in the agent registry.
+
+        Returns ``None`` if the agent is not registered.
+        """
+        agents: dict[str, Any] = self._agents_cfg.get("agents", {})
+        raw = agents.get(agent_id)
+        if raw is None:
+            return None
+        return AgentConfig(**raw)
+
+    def get_resource(self, resource_id: str) -> Optional[ResourceEntry]:
+        """Look up a resource by id in the resource registry.
+
+        Returns ``None`` if the resource is not registered.
+        """
+        resources: dict[str, Any] = self._resources_cfg.get("resources", {})
+        raw = resources.get(resource_id)
+        if raw is None:
+            return None
+        return ResourceEntry(**raw)
+
+    def get_sql_query(self, query_name: str) -> Optional[SQLQueryDef]:
+        """Look up a named SQL query by name in the allowlist.
+
+        Returns ``None`` if the query is not registered.
+        """
+        queries: dict[str, Any] = self._resources_cfg.get("sql_queries", {})
+        raw = queries.get(query_name)
+        if raw is None:
+            return None
+        return SQLQueryDef(**raw)
+
+    # ── Core evaluation ──────────────────────
 
     def evaluate(
         self,
-        request: AuraRequest,
+        request: ToolRequest,
         context: RunContext,
-    ) -> PolicyDecision:
-        """Run all enabled rules in order against *request* / *context*.
+    ) -> PolicyResult:
+        """Run all enabled deterministic rules and combine their results.
 
-        Returns a ``PolicyDecision`` with:
-          - ``decision``: the aggregate outcome.
-          - ``risk_level``: ``max()`` across all rule risk levels.
-          - ``rule_results``: individual results from each rule.
-          - ``deciding_rule_id``: the rule that produced the final decision.
+        Combination uses **monotone enforcement**:
+
+        * Any ``BLOCK`` → final ``BLOCK`` (immediate, cannot be overridden).
+        * Any ``APPROVAL`` → final ``APPROVAL`` (unless blocked).
+        * All ``ALLOW`` / ``DEFER`` → ``ALLOW`` if at least one ``ALLOW``,
+          else ``DEFER``.
+        * ``final_risk_level`` = max of all individual rule risk levels.
+        * ``requires_jev`` = True when the final decision is ``DEFER``.
+        * ``requires_approval`` = True when any rule returned ``APPROVAL``.
         """
-        from aura.models import RuleResult
-
+        all_rules = get_all_rules()
         rule_results: list[RuleResult] = []
-        max_risk = RiskLevel.NONE
+
         final_decision = Decision.ALLOW
-        deciding_rule_id: str | None = None
-        final_reason_code = "DEFAULT_ALLOW"
+        final_risk = RiskLevel.LOW
+        has_allow = False
+        has_defer = False
+        has_approval = False
 
-        for rule in self._rules:
-            if not rule.enabled:
+        for rule_fn in all_rules:
+            # Derive rule_id from function name → uppercase
+            rule_id = rule_fn.__name__.replace("rule_", "RULE_").upper()
+            if rule_id not in self._enabled_rule_ids:
                 continue
 
-            result = rule.evaluate(request, context)
-            if result is None:
-                # Rule is not applicable to this request.
-                continue
-
+            result = rule_fn(request, context, self._merged_config)
             rule_results.append(result)
 
-            # Monotone risk combination.
-            if result.risk_level > max_risk:
-                max_risk = RiskLevel(result.risk_level)
+            # Track individual decision types
+            if result.decision == Decision.ALLOW:
+                has_allow = True
+            elif result.decision == Decision.DEFER:
+                has_defer = True
+            elif result.decision == Decision.APPROVAL:
+                has_approval = True
 
-            # A BLOCK is final — short-circuit immediately.
-            if result.decision == Decision.BLOCK:
-                return PolicyDecision(
-                    decision=Decision.BLOCK,
-                    risk_level=RiskLevel(max(max_risk, result.risk_level)),
-                    rule_results=rule_results,
-                    policy_version=self._version,
-                    deciding_rule_id=result.rule_id,
-                    reason_code=result.reason_code,
-                )
+            # Monotone: take the most restrictive decision
+            final_decision = _max_decision(final_decision, result.decision)
+            final_risk = _max_risk(final_risk, result.risk_level)
 
-            # Track the most restrictive non-BLOCK decision.
-            # Priority: APPROVAL > DEFER > ALLOW
-            decision_priority = {
-                Decision.ALLOW: 0,
-                Decision.DEFER: 1,
-                Decision.APPROVAL: 2,
-            }
+            # Short-circuit: if we already have a BLOCK, remaining rules
+            # still run for audit completeness but cannot change the outcome.
 
-            if decision_priority.get(result.decision, 0) > decision_priority.get(
-                final_decision, 0
-            ):
-                final_decision = result.decision
-                deciding_rule_id = result.rule_id
-                final_reason_code = result.reason_code
+        # Refine final decision for the ALLOW/DEFER case
+        if final_decision not in (Decision.BLOCK, Decision.APPROVAL):
+            if has_defer and not has_allow:
+                final_decision = Decision.DEFER
+            elif has_allow:
+                final_decision = Decision.ALLOW if not has_defer else Decision.DEFER
 
-            # If this is the first rule to produce a result, set it as deciding.
-            if deciding_rule_id is None:
-                deciding_rule_id = result.rule_id
-                final_reason_code = result.reason_code
+        # When no rules ran at all, default to DEFER (fail-safe)
+        if not rule_results:
+            final_decision = Decision.DEFER
 
-        return PolicyDecision(
-            decision=final_decision,
-            risk_level=max_risk,
+        requires_jev = (has_defer or final_decision == Decision.DEFER) and final_decision != Decision.BLOCK
+        requires_approval = has_approval and final_decision != Decision.BLOCK
+
+        # Permissive / Monitor Mode: if configured, allow all actions while preserving audit findings
+        if self._policy_cfg.get("enforcement_mode") == "permissive":
+            final_decision = Decision.ALLOW
+            requires_jev = False
+            requires_approval = False
+
+        return PolicyResult(
             rule_results=rule_results,
-            policy_version=self._version,
-            deciding_rule_id=deciding_rule_id,
-            reason_code=final_reason_code,
+            final_decision=final_decision,
+            final_risk_level=final_risk,
+            policy_version=self.policy_version,
+            requires_jev=requires_jev,
+            requires_approval=requires_approval,
         )
+
+    # ── JEV combination ─────────────────────
 
     def combine_with_jev(
         self,
-        policy_decision: PolicyDecision,
-        jev_risk: RiskLevel,
-        jev_decision: Decision,
-    ) -> PolicyDecision:
+        policy_result: PolicyResult,
+        jev_result: JEVResult,
+    ) -> PolicyResult:
         """Combine the deterministic policy result with a JEV assessment.
 
-        JEV may raise risk but never lower it.  A deterministic BLOCK
-        is final regardless of JEV.
+        Monotone enforcement guarantees:
+
+        * JEV can **raise** the risk level but **NEVER** lower it.
+        * JEV **CANNOT** override a deterministic ``BLOCK``.
+        * If JEV recommends ``BLOCK`` and policy was not ``BLOCK``, the
+          combined result becomes ``BLOCK``.
+        * If JEV failed or timed out, fail closed to ``BLOCK``.
         """
-        # Deterministic BLOCK is final.
-        if policy_decision.decision == Decision.BLOCK:
-            return policy_decision
+        # If policy already blocked, JEV cannot change anything
+        if policy_result.final_decision == Decision.BLOCK:
+            return policy_result
 
-        # Monotone risk: final = max(policy, jev).
-        combined_risk = RiskLevel(max(policy_decision.risk_level, jev_risk))
+        # If JEV was not invoked, return as-is
+        if not jev_result.invoked:
+            return policy_result
 
-        # JEV can escalate decision but not downgrade.
-        decision_priority = {
-            Decision.ALLOW: 0,
-            Decision.DEFER: 1,
-            Decision.APPROVAL: 2,
-            Decision.BLOCK: 3,
-        }
+        # Fail closed on JEV timeout, error, or missing assessment
+        if jev_result.assessment is None or jev_result.failure_reason:
+            return PolicyResult(
+                rule_results=policy_result.rule_results,
+                final_decision=Decision.BLOCK,
+                final_risk_level=RiskLevel.CRITICAL,
+                policy_version=self.policy_version,
+                requires_jev=False,
+                requires_approval=False,
+            )
 
-        if decision_priority.get(jev_decision, 0) > decision_priority.get(
-            policy_decision.decision, 0
-        ):
-            combined_decision = jev_decision
-        else:
-            combined_decision = policy_decision.decision
+        assessment = jev_result.assessment
 
-        return PolicyDecision(
-            decision=combined_decision,
-            risk_level=combined_risk,
-            rule_results=policy_decision.rule_results,
-            policy_version=policy_decision.policy_version,
-            deciding_rule_id=policy_decision.deciding_rule_id,
-            reason_code=policy_decision.reason_code,
+        # Risk level: monotone max (JEV can only raise)
+        combined_risk = _max_risk(
+            policy_result.final_risk_level,
+            assessment.risk_level,
+        )
+
+        # Decision: monotone max (JEV can raise to BLOCK or APPROVAL, but never lower)
+        combined_decision = _max_decision(
+            policy_result.final_decision,
+            assessment.recommendation,
+        )
+
+        # Escalation based on JEV risk level:
+        # HIGH risk -> escalate to APPROVAL (requires human user approval)
+        # CRITICAL risk -> escalate to BLOCK
+        if assessment.risk_level == RiskLevel.HIGH and combined_decision not in (Decision.BLOCK, Decision.APPROVAL):
+            combined_decision = Decision.APPROVAL
+        elif assessment.risk_level == RiskLevel.CRITICAL:
+            combined_decision = Decision.BLOCK
+
+        # Update requires flags
+        requires_jev = combined_decision == Decision.DEFER
+        requires_approval = (
+            policy_result.requires_approval
+            or combined_decision == Decision.APPROVAL
+        ) and combined_decision != Decision.BLOCK
+
+        return PolicyResult(
+            rule_results=policy_result.rule_results,
+            final_decision=combined_decision,
+            final_risk_level=combined_risk,
+            policy_version=policy_result.policy_version,
+            requires_jev=requires_jev,
+            requires_approval=requires_approval,
         )
