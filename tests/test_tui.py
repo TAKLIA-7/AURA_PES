@@ -7,12 +7,12 @@ import pytest
 from textual.widgets import DataTable, Input, Static, TabbedContent
 
 from aura.models import Decision, ExecutionStatus, GatewayResult, RiskLevel
-from aura.tui import AuraApp
+from aura.tui import ApprovalModalScreen, AuraApp, make_gradient_logo
 
 
 @pytest.mark.asyncio
 async def test_tui_initialization_and_widgets():
-    """Verify AuraApp mounts with all Claude Code-style components."""
+    """Verify AuraApp mounts with purplish-blue logo and Claude Code-style components."""
     app = AuraApp()
     async with app.run_test() as pilot:
         # Check banner
@@ -31,6 +31,7 @@ async def test_tui_initialization_and_widgets():
         assert prompt_input is not None
         assert app.query_one("#btn_send") is not None
         assert app.query_one("#btn_demo1") is not None
+        assert app.query_one("#btn_demo4") is not None
 
         # Check Audit DataTable
         table = app.query_one("#audit_table", DataTable)
@@ -72,7 +73,7 @@ async def test_tui_enforcement_rendering():
             execution_status=ExecutionStatus.COMPLETED,
             risk_level=RiskLevel.LOW,
             tool_name="read_file",
-            result_data="Revenue: $5.2M",
+            result_data={"doc_id": "doc:public_report", "content": "Revenue: $5.2M"},
         )
         fake_res = {
             "aura_results": [fake_gw_result],
@@ -91,7 +92,7 @@ async def test_tui_enforcement_rendering():
         card_texts = [str(c.render()) for c in cards]
         combined = " ".join(card_texts)
         assert "read_file" in combined or "AURA AUTHORIZED" in combined
-        assert "Q3 revenue" in combined
+        assert "Revenue: $5.2M" in combined
 
 
 @pytest.mark.asyncio
@@ -135,3 +136,52 @@ async def test_tui_query_output_card_displayed():
         assert "520000" in output_text
         assert "610000" in output_text
 
+
+@pytest.mark.asyncio
+async def test_tui_approval_modal_popup():
+    """Verify that approval requests automatically trigger the interactive popup modal."""
+    from aura.models import ToolRequest, RunContext
+    app = AuraApp()
+    async with app.run_test() as pilot:
+        req = ToolRequest(
+            agent_id="sql_agent",
+            tool_name="run_query",
+            parameters={"query_name": "insert_audit_note", "params": {"note": "patch"}},
+        )
+        ctx = RunContext(agent_id="sql_agent", agent_role="sql")
+        record = app.gateway.approvals.create_pending_approval(req, ctx, "v1.0")
+
+        approval_gw_result = GatewayResult(
+            request_id="req_sensitive_789",
+            trace_id="tr_sensitive_789",
+            decision=Decision.APPROVAL,
+            execution_status=ExecutionStatus.NOT_EXECUTED,
+            risk_level=RiskLevel.HIGH,
+            tool_name="run_query",
+            approval_id=record.approval_id,
+            reason="Sensitive write query requires approval",
+        )
+        fake_res = {
+            "aura_results": [approval_gw_result],
+            "final_response": "Operation is pending human approval.",
+        }
+
+        status_widget = Static("status", id="temp_status")
+        chat_history = app.query_one("#chat_history")
+        chat_history.mount(status_widget)
+
+        # Triggers automatic popup
+        app._handle_agent_completed(fake_res, status_widget)
+        await pilot.pause()
+
+        # Check modal screen is active
+        active_screen = app.screen
+        assert isinstance(active_screen, ApprovalModalScreen)
+        assert active_screen.approval_id == record.approval_id
+
+        # Simulate user approving via modal action
+        active_screen.action_approve()
+        await pilot.pause()
+
+        # Modal is dismissed
+        assert not isinstance(app.screen, ApprovalModalScreen)
