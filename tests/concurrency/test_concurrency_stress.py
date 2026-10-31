@@ -25,6 +25,7 @@ class TestConcurrencyStress:
         gw = AuraGateway.create_default(config_dir=str(FIXTURES_DIR), db_path=db_path)
         # Ensure high rate limit
         gw.rate_limiter.default_limit = 100000
+        gw.rate_limiter.role_limits["admin"] = 100000
 
         admin = AgentIdentity(agent_id="admin_agent", role="admin")
 

@@ -1,0 +1,36 @@
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+
+# SQLite databases and WAL logs
+*.db
+*.db-wal
+*.db-shm
+aura.db
+aura.db-wal
+aura.db-shm
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# IDE & Editor configs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# JSONL audit exports
+*.jsonl
+
