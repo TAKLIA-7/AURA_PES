@@ -14,6 +14,7 @@ from aura.tui import ApprovalModalScreen, AuraApp, make_gradient_logo
 async def test_tui_initialization_and_widgets():
     """Verify AuraApp mounts with purplish-blue logo and Claude Code-style components."""
     app = AuraApp()
+    app.run_agent_task = lambda prompt, status_widget: None
     async with app.run_test() as pilot:
         # Check banner
         banner = app.query_one("#ascii_banner", Static)
@@ -43,6 +44,7 @@ async def test_tui_initialization_and_widgets():
 async def test_tui_tab_navigation_and_hash_verification():
     """Verify tab switching and cryptographic hash chain verification."""
     app = AuraApp()
+    app.run_agent_task = lambda prompt, status_widget: None
     async with app.run_test() as pilot:
         # Switch to logs
         app.action_switch_tab("tab_logs")
@@ -65,6 +67,7 @@ async def test_tui_tab_navigation_and_hash_verification():
 async def test_tui_enforcement_rendering():
     """Verify that GatewayResult objects render as distinct visual cards."""
     app = AuraApp()
+    app.run_agent_task = lambda prompt, status_widget: None
     async with app.run_test() as pilot:
         fake_gw_result = GatewayResult(
             request_id="req_test_123",
@@ -99,6 +102,7 @@ async def test_tui_enforcement_rendering():
 async def test_tui_query_output_card_displayed():
     """Verify that query result data is explicitly displayed on the dashboard."""
     app = AuraApp()
+    app.run_agent_task = lambda prompt, status_widget: None
     async with app.run_test() as pilot:
         query_gw_result = GatewayResult(
             request_id="req_sql_456",
@@ -142,6 +146,7 @@ async def test_tui_approval_modal_popup():
     """Verify that approval requests automatically trigger the interactive popup modal."""
     from aura.models import ToolRequest, RunContext
     app = AuraApp()
+    app.run_agent_task = lambda prompt, status_widget: None
     async with app.run_test() as pilot:
         req = ToolRequest(
             agent_id="sql_agent",
@@ -192,6 +197,7 @@ async def test_tui_model_switching():
     """Verify switching AI models via buttons, F4 cycle, and slash commands."""
     from aura.agent import MODELS
     app = AuraApp()
+    app.run_agent_task = lambda prompt, status_widget: None
     async with app.run_test() as pilot:
         # Default model is D
         assert app.mas.model_key == "D"
@@ -224,6 +230,7 @@ async def test_tui_welcome_splash_disappears_on_chat_and_restores():
     """Verify large ASCII welcome banner disappears on user chat and restores on Clear View."""
     from textual.containers import Container
     app = AuraApp()
+    app.run_agent_task = lambda prompt, status_widget: None
     async with app.run_test() as pilot:
         # Initially welcome splash is present
         assert app._show_welcome is True
@@ -249,6 +256,7 @@ async def test_tui_run_logs_and_multiagent_buttons():
     """Verify specific button for viewing agent logs and multi-agent pipeline action."""
     from aura.models import Decision, ExecutionStatus, GatewayResult, RiskLevel
     app = AuraApp()
+    app.run_agent_task = lambda prompt, status_widget: None
     async with app.run_test() as pilot:
         # Simulate agent task completed
         fake_gw_result = GatewayResult(
@@ -297,4 +305,47 @@ async def test_tui_run_logs_and_multiagent_buttons():
         btn_agent_logs.press()
         await pilot.pause()
         assert "MULTI-AGENT REGISTRY" in " ".join(str(c.render()) for c in chat_history.query(".agent_logs_card"))
+
+
+@pytest.mark.asyncio
+async def test_tui_settings_tab_and_model_switching():
+    """Verify dedicated Settings tab holds AI model selector and updates model spec display."""
+    from aura.agent import MODELS
+    app = AuraApp()
+    app.run_agent_task = lambda prompt, status_widget: None
+    async with app.run_test() as pilot:
+        # Check tab_settings exists
+        app.action_switch_tab("tab_settings")
+        await pilot.pause()
+        assert app.query_one(TabbedContent).active == "tab_settings"
+
+        # Model buttons exist inside settings
+        btn_a = app.query_one("#btn_model_a")
+        btn_a.press()
+        await pilot.pause()
+        assert app.mas.model_key == "A"
+        assert app.mas.active_model == MODELS["A"]
+
+        # Check model info display was updated
+        info = app.query_one("#model_info_display", Static)
+        assert "seedream" in str(info.render())
+
+
+@pytest.mark.asyncio
+async def test_tui_hallucination_defense_live_demo():
+    """Verify Demo 5 triggers live Hallucination & False-Success mitigation card."""
+    app = AuraApp()
+    app.run_agent_task = lambda prompt, status_widget: None
+    async with app.run_test() as pilot:
+        btn_hal = app.query_one("#btn_demo_hallucination")
+        btn_hal.press()
+        await pilot.pause()
+
+        chat_history = app.query_one("#chat_history")
+        hal_cards = chat_history.query(".hallucination_alert_card")
+        assert len(hal_cards) >= 1
+        hal_text = str(hal_cards[0].render())
+        assert "HALLUCINATION DEFENSE" in hal_text
+        assert "False Success Narrated" in hal_text or "INTERCEPTED" in hal_text
+
 
