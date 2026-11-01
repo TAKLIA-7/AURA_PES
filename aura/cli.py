@@ -692,6 +692,31 @@ def run_autonomous_task_runner(config_dir: str = "config", task_prompt: str | No
             run_res = loop.run(task_prompt, agent=agent_id)
             duration_ms = (time.time() - start_time) * 1000
 
+            if run_res.final_answer:
+                console.print(Panel(run_res.final_answer, title="[bold cyan]AGENT RESPONSE & DIRECTIVE[/bold cyan]", border_style="cyan"))
+
+            # Interactive multi-turn follow-up loop if user wants to provide missing details or continue
+            while True:
+                user_followup = Prompt.ask(
+                    "\n[bold yellow]Enter missing details or next instruction (or press Enter to finish task)[/bold yellow]",
+                    default="",
+                ).strip()
+                if not user_followup:
+                    break
+
+                console.print(f"\n[bold cyan]Processing input with DeepSeek ({model_name})...[/bold cyan]")
+                start_step = time.time()
+                run_res = loop.run(
+                    user_followup,
+                    agent=agent_id,
+                    run_id=run_res.run_id,
+                    message_history=run_res.messages,
+                )
+                duration_ms += (time.time() - start_step) * 1000
+
+                if run_res.final_answer:
+                    console.print(Panel(run_res.final_answer, title="[bold cyan]AGENT RESPONSE & DIRECTIVE[/bold cyan]", border_style="cyan"))
+
             # Register security events dynamically if blocked calls occurred
             if run_res.blocked_tool_calls > 0:
                 ui._record_security_event({
@@ -730,6 +755,31 @@ def run_autonomous_task_runner(config_dir: str = "config", task_prompt: str | No
             console.print(f"\n[bold cyan]Dispatching autonomous Gemini agent for task: '{task_prompt}'...[/bold cyan]")
             run_res = loop.run(task_prompt, agent=agent_id)
             duration_ms = (time.time() - start_time) * 1000
+
+            if run_res.final_answer:
+                console.print(Panel(run_res.final_answer, title="[bold cyan]AGENT RESPONSE & DIRECTIVE[/bold cyan]", border_style="cyan"))
+
+            # Interactive multi-turn follow-up loop
+            while True:
+                user_followup = Prompt.ask(
+                    "\n[bold yellow]Enter missing details or next instruction (or press Enter to finish task)[/bold yellow]",
+                    default="",
+                ).strip()
+                if not user_followup:
+                    break
+
+                console.print(f"\n[bold cyan]Processing input with Gemini...[/bold cyan]")
+                start_step = time.time()
+                run_res = loop.run(
+                    user_followup,
+                    agent=agent_id,
+                    run_id=run_res.run_id,
+                    message_history=run_res.messages,
+                )
+                duration_ms += (time.time() - start_step) * 1000
+
+                if run_res.final_answer:
+                    console.print(Panel(run_res.final_answer, title="[bold cyan]AGENT RESPONSE & DIRECTIVE[/bold cyan]", border_style="cyan"))
 
             if run_res.blocked_tool_calls > 0:
                 ui._record_security_event({

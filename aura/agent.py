@@ -358,6 +358,7 @@ class AgentRunResult(BaseModel):
     blocked_tool_calls: int = 0
     results: list[dict[str, Any]] = Field(default_factory=list)
     error: str | None = None
+    messages: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AgentLoop:
@@ -381,6 +382,7 @@ class AgentLoop:
         agent: AgentIdentity,
         run_id: str | None = None,
         initial_taint: TaintState | None = None,
+        message_history: list[dict[str, Any]] | None = None,
     ) -> AgentRunResult:
         """Execute the bounded agent loop for *goal* under *agent* RBAC."""
         active_run_id = run_id or f"run-{uuid.uuid4().hex[:8]}"
@@ -389,9 +391,13 @@ class AgentLoop:
         # Get pure tool schemas (never adapter callables or credentials)
         tool_schemas = self.gateway.tool_registry.get_schemas()
 
-        messages: list[dict[str, Any]] = [
-            {"role": "user", "content": goal},
-        ]
+        if message_history:
+            messages: list[dict[str, Any]] = list(message_history)
+            messages.append({"role": "user", "content": goal})
+        else:
+            messages = [
+                {"role": "user", "content": goal},
+            ]
 
         # Shared execution context across steps with global deadline
         dummy_req = AuraRequest(
@@ -426,6 +432,7 @@ class AgentLoop:
                     blocked_tool_calls=blocked_tool_calls,
                     results=execution_trace,
                     error="GLOBAL_DEADLINE_EXCEEDED",
+                    messages=messages,
                 )
 
             # Query LLM
@@ -434,6 +441,7 @@ class AgentLoop:
 
             # If LLM produces final answer with no tool calls, finish
             if not llm_response.tool_calls:
+                messages.append({"role": "assistant", "content": llm_response.content or ""})
                 return AgentRunResult(
                     run_id=active_run_id,
                     agent_id=agent.agent_id,
@@ -443,7 +451,18 @@ class AgentLoop:
                     total_tool_calls=total_tool_calls,
                     blocked_tool_calls=blocked_tool_calls,
                     results=execution_trace,
+                    messages=messages,
                 )
+
+            # Record assistant call proposal in messages history
+            messages.append({
+                "role": "assistant",
+                "content": llm_response.content or "",
+                "tool_calls": [
+                    {"call_id": p.call_id, "tool_name": p.tool_name, "arguments": p.arguments}
+                    for p in llm_response.tool_calls
+                ],
+            })
 
             # Process proposed tool calls MANUALLY through AURA
             for proposal in llm_response.tool_calls:
@@ -517,4 +536,5 @@ class AgentLoop:
             blocked_tool_calls=blocked_tool_calls,
             results=execution_trace,
             error="MAX_STEPS_EXCEEDED",
+            messages=messages,
         )
