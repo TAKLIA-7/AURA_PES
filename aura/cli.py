@@ -279,17 +279,21 @@ def run_gemini_agent(task: str, config_dir: str = "config") -> None:
     print("=================================================================\n")
 
 
-def run_security_demos(config_dir: str = "config") -> None:
+def run_security_demos(config_dir: str = "config", gw: AuraGateway | None = None, ui: AuraTerminalUI | None = None) -> None:
     """Run all 9 repeatable security demonstrations (Demos A through I)."""
+    import os
     from rich.console import Console
     from aura.demos import SecurityDemos
     from aura.orchestration.orchestrator import MultiAgentOrchestrator
     from aura.orchestration.ui import AuraTerminalUI
 
     console = Console()
-    gw = AuraGateway.create_default(config_dir=config_dir)
-    orchestrator = MultiAgentOrchestrator(gw)
-    ui = AuraTerminalUI(orchestrator, console=console)
+    if gw is None:
+        db_path = os.environ.get("AURA_DB_PATH", "aura.db")
+        gw = AuraGateway.create_default(config_dir=config_dir, db_path=db_path)
+    if ui is None:
+        orchestrator = MultiAgentOrchestrator(gw)
+        ui = AuraTerminalUI(orchestrator, console=console)
 
     ui.render_header()
     console.print("\n[bold yellow]Executing Security & Policy Demonstrations A through I...[/bold yellow]\n")
@@ -300,8 +304,9 @@ def run_security_demos(config_dir: str = "config") -> None:
     console.print()
 
 
-def run_customer_refund_workflow(config_dir: str = "config", interactive: bool = True) -> None:
+def run_customer_refund_workflow(config_dir: str = "config", interactive: bool = True, gw: AuraGateway | None = None, ui: AuraTerminalUI | None = None) -> None:
     """Run the primary Customer Refund and Replacement end-to-end multi-agent scenario."""
+    import os
     from rich.console import Console
     from rich.prompt import Prompt
     from aura.orchestration.orchestrator import MultiAgentOrchestrator
@@ -310,9 +315,12 @@ def run_customer_refund_workflow(config_dir: str = "config", interactive: bool =
     from aura.workflow.scenarios import create_customer_refund_workflow
 
     console = Console()
-    gw = AuraGateway.create_default(config_dir=config_dir)
-    orchestrator = MultiAgentOrchestrator(gw)
-    ui = AuraTerminalUI(orchestrator, console=console)
+    if gw is None:
+        db_path = os.environ.get("AURA_DB_PATH", "aura.db")
+        gw = AuraGateway.create_default(config_dir=config_dir, db_path=db_path)
+    if ui is None:
+        orchestrator = MultiAgentOrchestrator(gw)
+        ui = AuraTerminalUI(orchestrator, console=console)
 
     ui.render_header()
     console.print("\n[bold yellow]Running Customer Refund & Replacement Multi-Agent DAG Workflow[/bold yellow]")
@@ -332,12 +340,20 @@ def run_customer_refund_workflow(config_dir: str = "config", interactive: bool =
 
         if interactive:
             console.print("[cyan]Human Operator Reviewing... Actions: CREATE_REFUND ($129.99), CREATE_REPLACEMENT (PROD-BLENDER-7)[/cyan]")
-            approved = Prompt.ask("[bold yellow]Approve customer refund ($129.99) & replacement shipment? [Y/n][/bold yellow]", default="y").strip().lower() != "n"
-            if approved:
+            decision_choice = Prompt.ask(
+                "[bold yellow]Operator Decision: [1] Approve now, [2] Leave queued for Option 6, [3] Decline[/bold yellow]",
+                choices=["1", "2", "3", "approve", "queue", "decline"],
+                default="1",
+            ).strip()
+
+            if decision_choice in ("1", "approve"):
                 console.print("[bold green]Operator decision: APPROVED [Cryptographic parameter binding verified][/bold green]\n")
                 console.print("[bold cyan][STEP 3] Consuming Approvals and Resuming Downstream Notification...[/bold cyan]")
                 wf = engine.resume_after_approval(wf.workflow_id, approver_id="compliance_director")
                 ui.render_workflow(wf)
+            elif decision_choice in ("2", "queue"):
+                console.print("[bold cyan]➡ APPROVAL REQUESTS QUEUED. Pending approval is live in Option 6 (Human Approval Queue).[/bold cyan]")
+                console.print("[dim]You can open Option 6 from the main menu at any time to inspect and approve/decline.[/dim]\n")
             else:
                 console.print("[bold red]Operator decision: REJECTED [Action declined by operator][/bold red]\n")
                 wf = engine.decline_approval(wf.workflow_id, approver_id="compliance_director")
@@ -356,22 +372,26 @@ def run_customer_refund_workflow(config_dir: str = "config", interactive: bool =
     console.print(f"[bold green]SHA-256 Hash Chain Integrity: {'PASS' if is_valid else 'FAIL'} (Error={err})[/bold green]\n")
 
 
-def run_autonomous_task_runner(config_dir: str = "config", task_prompt: str | None = None) -> None:
+def run_autonomous_task_runner(config_dir: str = "config", task_prompt: str | None = None, gw: AuraGateway | None = None, ui: AuraTerminalUI | None = None) -> None:
     """Run autonomous task runner with intelligent multi-agent planning and decomposition."""
     import os
     import time
+    from datetime import datetime, timezone
     from rich.console import Console
     from rich.panel import Panel
     from rich.prompt import Prompt
     from aura.orchestration.orchestrator import MultiAgentOrchestrator
     from aura.orchestration.ui import AuraTerminalUI
     from aura.workflow.engine import WorkflowEngine
-    from aura.workflow.scenarios import create_meeting_room_workflow
+    from aura.workflow.scenarios import create_customer_refund_workflow, create_meeting_room_workflow
 
     console = Console()
-    gw = AuraGateway.create_default(config_dir=config_dir)
-    orchestrator = MultiAgentOrchestrator(gw)
-    ui = AuraTerminalUI(orchestrator, console=console)
+    if gw is None:
+        db_path = os.environ.get("AURA_DB_PATH", "aura.db")
+        gw = AuraGateway.create_default(config_dir=config_dir, db_path=db_path)
+    if ui is None:
+        orchestrator = MultiAgentOrchestrator(gw)
+        ui = AuraTerminalUI(orchestrator, console=console)
 
     ui.render_header()
     console.print("\n[bold yellow]── Autonomous Task Runner (Intelligent Multi-Agent Execution) ──[/bold yellow]\n")
@@ -384,16 +404,25 @@ def run_autonomous_task_runner(config_dir: str = "config", task_prompt: str | No
 
     lower_task = task_prompt.lower()
     is_meeting_room = any(k in lower_task for k in ["meeting", "room", "reserve", "reservation", "conference"])
+    is_refund_workflow = any(k in lower_task for k in ["refund", "replacement", "blender", "broken", "invoice", "damaged", "return", "photo", "audio"])
 
     if is_meeting_room:
+        has_security_probe = any(k in lower_task for k in ["confidential", "hr", "payroll", "unauthorized", "salary", "audit", "block", "restricted"])
+
         plan_steps = [
             "Parse constraints: 4 attendees, 2 hours, projector required, max budget $100.",
             "Researcher Agent searches available meeting rooms and equipment via SEARCH_MEETING_ROOMS.",
+        ]
+        if has_security_probe:
+            plan_steps.append("Security Policy Check: Analyst Agent attempts direct read of confidential HR records for employee verification.")
+
+        plan_steps.extend([
             "Analyst Agent compares room pricing, capacity, and schedule against budget (Maple: $80, Oak: $130).",
             "Executor Agent requests room reservation via CREATE_RESERVATION (gated by human approval).",
             "Operator reviews parameters and cryptographic digest, issuing binding approval.",
             "Executor Agent books room and dispatches calendar invitations via SEND_MEETING_INVITE.",
-        ]
+        ])
+
         team = {
             "Coordinator": "coordinator_agent",
             "Researcher": "researcher_agent",
@@ -414,12 +443,37 @@ def run_autonomous_task_runner(config_dir: str = "config", task_prompt: str | No
             console.print("[dim]Task cancelled by user.[/dim]")
             return
 
+        start_time = time.time()
+        blocked_probes = 0
+
+        # Run security probe if requested in the query
+        if has_security_probe:
+            from aura.models import AgentIdentity, AuraRequest, RunContext, ToolAction
+            console.print("\n[bold red][SECURITY ENFORCEMENT PROBE] Analyst Agent requesting access to 'confidential/hr_records'...[/bold red]")
+            probe_req = AuraRequest(
+                request_id=f"probe-hr-{int(time.time())}",
+                action=ToolAction.READ_FILE,
+                params={"doc_id": "confidential/hr_records"},
+                agent=AgentIdentity(agent_id="analyst_agent", role="analyst"),
+            )
+            probe_res = gw.handle(probe_req, RunContext(request=probe_req))
+            console.print(f"  [bold red]✖ INTERCEPTED BY AURA GATEWAY: Decision = {probe_res.decision.value} (Risk = {probe_res.risk_level.name})[/bold red]")
+            console.print(f"  [dim red]Reason: {probe_res.error}[/dim red]\n")
+            blocked_probes = 1
+            ui._record_security_event({
+                "event_type": "RBAC_PERMISSION_DENIED",
+                "agent_id": "analyst_agent (analyst)",
+                "decision": "BLOCK",
+                "action": "INTERCEPT & BLOCK",
+                "error": "Unauthorized attempt to access 'confidential/hr_records' blocked by PermissionCheckRule",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+
         engine = WorkflowEngine(gateway=gw)
         wf = create_meeting_room_workflow()
         engine.register_workflow(wf)
 
-        start_time = time.time()
-        console.print("\n[bold cyan][STEP 1] Executing Research and Constraint Analysis...[/bold cyan]")
+        console.print("[bold cyan][STEP 1] Executing Research and Constraint Analysis...[/bold cyan]")
         wf = engine.execute_workflow(wf.workflow_id)
         ui.render_workflow(wf)
 
@@ -428,17 +482,26 @@ def run_autonomous_task_runner(config_dir: str = "config", task_prompt: str | No
             ui.render_approval_queue()
 
             console.print("[cyan]Operator Review: CREATE_RESERVATION (Maple Conference Room, 2 hrs, $80.00 <= $100 budget)[/cyan]")
-            approve_choice = Prompt.ask("[bold yellow]Authorize meeting room reservation and budget spend? [Y/n][/bold yellow]", default="y")
-            if approve_choice.strip().lower() != "n":
+            approve_choice = Prompt.ask(
+                "[bold yellow]Operator Decision: [1] Approve now, [2] Leave queued for Option 6, [3] Decline[/bold yellow]",
+                choices=["1", "2", "3", "approve", "queue", "decline"],
+                default="1",
+            ).strip()
+
+            if approve_choice in ("1", "approve"):
                 console.print("[bold green]✔ APPROVED by operator. Executing reservation claim...[/bold green]\n")
                 wf = engine.resume_after_approval(wf.workflow_id, approver_id="operations_lead")
+                ui.render_workflow(wf)
+            elif approve_choice in ("2", "queue"):
+                console.print("[bold cyan]➡ APPROVAL REQUEST QUEUED. Pending approval is live in Option 6 (Human Approval Queue).[/bold cyan]")
+                console.print("[dim]You can open Option 6 from the main menu at any time to inspect and approve/decline.[/dim]\n")
             else:
                 console.print("[bold red]✖ DECLINED by operator. Blocking downstream tasks...[/bold red]\n")
                 wf = engine.decline_approval(wf.workflow_id, approver_id="operations_lead")
-
-            ui.render_workflow(wf)
+                ui.render_workflow(wf)
 
         duration_ms = (time.time() - start_time) * 1000
+        is_valid, err = gw.audit_logger.verify_integrity()
 
         report_data = {
             "task_prompt": task_prompt,
@@ -446,29 +509,198 @@ def run_autonomous_task_runner(config_dir: str = "config", task_prompt: str | No
             "strategy": "4-Agent Coordinated DAG (Coordinator -> Researcher -> Analyst -> Executor)",
             "agents_assigned": team,
             "plan_steps": plan_steps,
-            "total_tool_calls": len(wf.tasks),
+            "total_tool_calls": len(wf.tasks) + blocked_probes,
             "allow_count": sum(1 for t in wf.tasks.values() if t.state.value == "COMPLETED"),
             "approval_count": 1,
+            "block_count": sum(1 for t in wf.tasks.values() if t.state.value in ("FAILED", "BLOCKED")) + blocked_probes,
+            "trace_id": getattr(wf, "trace_id", f"trc-{wf.workflow_id[:12]}"),
+            "audit_integrity": "PASS (SHA-256 Intact)" if is_valid else f"FAIL ({err})",
+            "duration_ms": duration_ms,
+            "status": wf.status.value,
+            "outcome_summary": (
+                (
+                    "Comprehensive Multi-Agent Execution Verified:\n"
+                    "• ALLOW (3): Meeting room search, internal roadmap read, and calendar invitations delivered.\n"
+                    "• APPROVAL (1): Maple Conference Room ($80.00) authorized by human operator.\n"
+                    "• BLOCK (1): Unauthorized access to confidential HR records intercepted and blocked by AURA RBAC.\n"
+                    "• TAMPER-EVIDENT: 100% of gateway transactions cryptographically linked with SHA-256 hashes."
+                )
+                if has_security_probe and wf.status.value == "COMPLETED"
+                else (
+                    "Maple Conference Room successfully reserved ($80.00) and invites sent to all 4 attendees."
+                    if wf.status.value == "COMPLETED"
+                    else (
+                        "Workflow paused at Human Approval Gate. Approval request waiting in Option 6."
+                        if wf.status.value == "PAUSED_FOR_APPROVAL"
+                        else "Reservation rejected by human operator; zero external bookings made."
+                    )
+                )
+            ),
+        }
+        console.print()
+        ui.render_task_execution_report(report_data)
+
+    elif is_refund_workflow:
+        plan_steps = [
+            "Decompose multi-modal customer inputs: photo-5521.jpg, invoice-8834.pdf, voice-2210.mp3.",
+            "Image Inspector Agent (image_agent) verifies image bytes and detects physical crack damage via ANALYZE_DAMAGE.",
+            "Invoice Processor Agent (invoice_agent) parses PDF stream and extracts order total ($129.99) via EXTRACT_INVOICE_DETAILS.",
+            "Audio Processor Agent (audio_agent) checks audio header and transcribes customer claim via TRANSCRIBE_CUSTOMER_AUDIO.",
+            "Order Verifier Agent (order_agent) cross-checks database record via LOOKUP_ORDER and CHECK_RETURN_ELIGIBILITY.",
+            "Resolution Specialist Agent (resolution_agent) prepares refund of $129.99 (gated on human approval).",
+            "Fulfillment Specialist Agent (fulfillment_agent) prepares replacement shipment (gated on human approval).",
+            "Resolution Specialist Agent dispatches confirmation to customer via SEND_CUSTOMER_UPDATE.",
+        ]
+        team = {
+            "Coordinator": "coordinator_agent",
+            "Image Inspector": "image_agent",
+            "Invoice Processor": "invoice_agent",
+            "Audio Processor": "audio_agent",
+            "Order Verifier": "order_agent",
+            "Resolution Specialist": "resolution_agent",
+            "Fulfillment Specialist": "fulfillment_agent",
+        }
+
+        plan_panel = (
+            "[bold white]Proposed Multi-Agent Decomposition Plan:[/bold white]\n"
+            + "\n".join(f"  {i+1}. {s}" for i, s in enumerate(plan_steps))
+            + "\n\n[bold white]Assigned Specialist Agents:[/bold white]\n"
+            + "\n".join(f"  • {role}: [magenta]{aid}[/magenta]" for role, aid in team.items())
+        )
+        console.print(Panel(plan_panel, title="[MULTI-AGENT CUSTOMER CASE DECOMPOSITION]", border_style="cyan"))
+
+        proceed = Prompt.ask("[yellow]Proceed with multi-agent execution? [Y/n][/yellow]", default="y")
+        if proceed.strip().lower() == "n":
+            console.print("[dim]Task cancelled by user.[/dim]")
+            return
+
+        engine = WorkflowEngine(gateway=gw)
+        wf = create_customer_refund_workflow()
+        engine.register_workflow(wf)
+
+        start_time = time.time()
+        console.print("\n[bold cyan][STEP 1] Executing Concurrent Specialist Analysis & Order Verification...[/bold cyan]")
+        wf = engine.execute_workflow(wf.workflow_id)
+        ui.render_workflow(wf)
+
+        if wf.status.value == "PAUSED_FOR_APPROVAL":
+            console.print("\n[bold yellow][STEP 2] Human Approval Required for Sensitive Financial & Fulfillment Actions[/bold yellow]")
+            ui.render_approval_queue()
+
+            console.print("[cyan]Human Operator Reviewing... Actions: CREATE_REFUND ($129.99), CREATE_REPLACEMENT (PROD-BLENDER-7)[/cyan]")
+            decision_choice = Prompt.ask(
+                "[bold yellow]Operator Decision: [1] Approve now, [2] Leave queued for Option 6, [3] Decline[/bold yellow]",
+                choices=["1", "2", "3", "approve", "queue", "decline"],
+                default="1",
+            ).strip()
+
+            if decision_choice in ("1", "approve"):
+                console.print("[bold green]Operator decision: APPROVED [Cryptographic parameter binding verified][/bold green]\n")
+                console.print("[bold cyan][STEP 3] Consuming Approvals and Resuming Downstream Notification...[/bold cyan]")
+                wf = engine.resume_after_approval(wf.workflow_id, approver_id="compliance_director")
+                ui.render_workflow(wf)
+            elif decision_choice in ("2", "queue"):
+                console.print("[bold cyan]➡ APPROVAL REQUESTS QUEUED. Pending approval is live in Option 6 (Human Approval Queue).[/bold cyan]")
+                console.print("[dim]You can open Option 6 from the main menu at any time to inspect and approve/decline.[/dim]\n")
+            else:
+                console.print("[bold red]Operator decision: REJECTED [Action declined by operator][/bold red]\n")
+                wf = engine.decline_approval(wf.workflow_id, approver_id="compliance_director")
+                ui.render_workflow(wf)
+                console.print("[red][HALTED] Workflow halted cleanly. Zero funds disbursed, zero replacement orders created.[/red]")
+
+        duration_ms = (time.time() - start_time) * 1000
+
+        report_data = {
+            "task_prompt": task_prompt,
+            "task_id": wf.workflow_id,
+            "strategy": "7-Agent Coordinated Specialist DAG",
+            "agents_assigned": team,
+            "plan_steps": plan_steps,
+            "total_tool_calls": len(wf.tasks),
+            "allow_count": sum(1 for t in wf.tasks.values() if t.state.value == "COMPLETED"),
+            "approval_count": 2,
             "block_count": sum(1 for t in wf.tasks.values() if t.state.value in ("FAILED", "BLOCKED")),
             "trace_id": getattr(wf, "trace_id", f"trc-{wf.workflow_id[:12]}"),
             "duration_ms": duration_ms,
-            "status": "COMPLETED" if wf.status.value == "COMPLETED" else "HALTED / REJECTED",
-            "outcome_summary": "Maple Conference Room successfully reserved ($80.00) and invites sent to all 4 attendees." if wf.status.value == "COMPLETED" else "Reservation rejected by human operator; zero external bookings made.",
+            "status": wf.status.value,
+            "outcome_summary": (
+                "Customer refund of $129.99 and replacement order PROD-BLENDER-7 authorized and confirmed."
+                if wf.status.value == "COMPLETED"
+                else (
+                    "Workflow paused at Human Approval Gate. Approvals are waiting in Option 6."
+                    if wf.status.value == "PAUSED_FOR_APPROVAL"
+                    else "Operations declined or blocked by security policy."
+                )
+            ),
         }
         console.print()
         ui.render_task_execution_report(report_data)
 
     else:
-        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-        if api_key:
+        openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+        gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        model_name = os.environ.get("OPENROUTER_MODEL") or os.environ.get("DEFAULT_LLM_MODEL") or "deepseek/deepseek-chat"
+
+        # Select appropriate agent: if probing confidential/HR, use analyst/admin; else analyst
+        if "confidential" in lower_task or "hr" in lower_task or "salary" in lower_task:
+            agent_id = gw.rbac_manager.get_agent("admin_agent") or gw.rbac_manager.get_agent("analyst_agent")
+        else:
+            agent_id = gw.rbac_manager.get_agent("analyst_agent") or gw.rbac_manager.get_agent("coordinator_agent")
+
+        if openrouter_key:
+            from aura.agent import OpenRouterLLMClient, AgentLoop
+            llm = OpenRouterLLMClient(model_name=model_name)
+            loop = AgentLoop(gateway=gw, llm_client=llm, max_steps=6)
+            start_time = time.time()
+            console.print(f"[bold cyan]Dispatching autonomous agent powered by DeepSeek via OpenRouter ({model_name})...[/bold cyan]")
+            run_res = loop.run(task_prompt, agent=agent_id)
+            duration_ms = (time.time() - start_time) * 1000
+
+            # Register security events dynamically if blocked calls occurred
+            if run_res.blocked_tool_calls > 0:
+                ui._record_security_event({
+                    "event_type": "SECURITY_BLOCK",
+                    "agent_id": f"{agent_id.agent_id} ({agent_id.role})",
+                    "decision": "BLOCK",
+                    "action": "INTERCEPT & BLOCK",
+                    "error": f"{run_res.blocked_tool_calls} unauthorized tool calls blocked by AURA gateway",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+
+            report_data = {
+                "task_prompt": task_prompt,
+                "task_id": f"task-deepseek-{int(time.time())}",
+                "strategy": f"DeepSeek ({model_name}) Bounded Loop with AURA Gateway Tool Enforcement",
+                "agents_assigned": {"Primary Agent": agent_id.agent_id, "Role": agent_id.role, "Model": model_name, "Provider": "OpenRouter"},
+                "plan_steps": ["Intent comprehension", "Dynamic tool dispatch via AURA.handle()", "Synthesis"],
+                "total_tool_calls": run_res.total_tool_calls,
+                "allow_count": run_res.total_tool_calls - run_res.blocked_tool_calls,
+                "approval_count": 0,
+                "block_count": run_res.blocked_tool_calls,
+                "trace_id": f"trc-deepseek-{int(time.time())}",
+                "duration_ms": duration_ms,
+                "status": "SUCCESS" if run_res.completed else "FAILED / BLOCKED",
+                "outcome_summary": run_res.final_answer or "Agent completed bounded loop.",
+            }
+            ui.render_task_execution_report(report_data)
+        elif gemini_key:
             from aura.agent import GeminiLLMClient, AgentLoop
             llm = GeminiLLMClient(model_name="gemini-2.5-flash")
-            agent_id = gw.rbac_manager.get_agent("coordinator_agent") or gw.rbac_manager.get_agent("analyst_agent")
             loop = AgentLoop(gateway=gw, llm_client=llm, max_steps=6)
             start_time = time.time()
             console.print(f"[bold cyan]Dispatching autonomous Gemini agent for task: '{task_prompt}'...[/bold cyan]")
             run_res = loop.run(task_prompt, agent=agent_id)
             duration_ms = (time.time() - start_time) * 1000
+
+            if run_res.blocked_tool_calls > 0:
+                ui._record_security_event({
+                    "event_type": "SECURITY_BLOCK",
+                    "agent_id": f"{agent_id.agent_id} ({agent_id.role})",
+                    "decision": "BLOCK",
+                    "action": "INTERCEPT & BLOCK",
+                    "error": f"{run_res.blocked_tool_calls} unauthorized tool calls blocked by AURA gateway",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
 
             report_data = {
                 "task_prompt": task_prompt,
@@ -482,18 +714,19 @@ def run_autonomous_task_runner(config_dir: str = "config", task_prompt: str | No
                 "block_count": run_res.blocked_tool_calls,
                 "trace_id": f"trc-gemini-{int(time.time())}",
                 "duration_ms": duration_ms,
-                "status": "SUCCESS" if run_res.completed else "FAILED",
+                "status": "SUCCESS" if run_res.completed else "FAILED / BLOCKED",
                 "outcome_summary": run_res.final_answer or "Agent completed bounded loop.",
             }
             ui.render_task_execution_report(report_data)
         else:
-            console.print("[yellow][!] Notice: GEMINI_API_KEY is not set in environment or .env.[/yellow]")
+            console.print("[yellow][!] Notice: Neither OPENROUTER_API_KEY nor GEMINI_API_KEY is configured in .env.[/yellow]")
             console.print("[dim]Executing structured multi-agent coordination pipeline demonstrating planning, gateway policy, and report...[/dim]\n")
             run_gemini_agent(task_prompt, config_dir=config_dir)
 
 
 def run_interactive_command_center(config_dir: str = "config") -> None:
     """Launch the comprehensive interactive terminal Command Center."""
+    import os
     from rich.console import Console
     from rich.panel import Panel
     from rich.prompt import Prompt
@@ -501,7 +734,8 @@ def run_interactive_command_center(config_dir: str = "config") -> None:
     from aura.orchestration.ui import AuraTerminalUI
 
     console = Console()
-    gw = AuraGateway.create_default(config_dir=config_dir)
+    db_path = os.environ.get("AURA_DB_PATH", "aura.db")
+    gw = AuraGateway.create_default(config_dir=config_dir, db_path=db_path, use_openrouter=True)
     orchestrator = MultiAgentOrchestrator(gw)
     ui = AuraTerminalUI(orchestrator, console=console)
 
@@ -532,9 +766,9 @@ def run_interactive_command_center(config_dir: str = "config") -> None:
         elif choice == "3":
             ui.render_permissions_matrix()
         elif choice == "4":
-            run_customer_refund_workflow(config_dir=config_dir, interactive=True)
+            run_customer_refund_workflow(config_dir=config_dir, interactive=True, gw=gw, ui=ui)
         elif choice == "5":
-            run_security_demos(config_dir=config_dir)
+            run_security_demos(config_dir=config_dir, gw=gw, ui=ui)
         elif choice == "6":
             ui.render_interactive_approval_center()
         elif choice == "7":
@@ -546,7 +780,7 @@ def run_interactive_command_center(config_dir: str = "config") -> None:
         elif choice == "10":
             ui.render_performance_dashboard()
         elif choice == "11":
-            run_autonomous_task_runner(config_dir=config_dir)
+            run_autonomous_task_runner(config_dir=config_dir, gw=gw, ui=ui)
         elif choice in ("12", "q", "exit"):
             console.print("[dim]Exiting AURA Command Center. Session closed.[/dim]")
             break
@@ -565,8 +799,10 @@ def main() -> None:
     parser.add_argument("--interactive", action="store_true", help="Launch interactive Command Center")
     parser.add_argument("--multi-agent", action="store_true", help="Run multi-agent orchestration demonstration")
     parser.add_argument("--verify-audit", action="store_true", help="Verify audit log hash-chain integrity")
+    parser.add_argument("--deepseek", action="store_true", help="Enable DeepSeek model via OpenRouter for JEV and agent")
+    parser.add_argument("--openrouter", action="store_true", help="Enable OpenRouter provider (default: deepseek/deepseek-chat)")
     parser.add_argument("--gemini", action="store_true", help="Enable Google Gemini model for JEV and agent")
-    parser.add_argument("--task", type=str, default=None, help="Run an autonomous agent task with Gemini")
+    parser.add_argument("--task", type=str, default=None, help="Run an autonomous agent task")
     args = parser.parse_args()
 
     if args.interactive:

@@ -210,6 +210,143 @@ class GeminiLLMClient(LLMClient):
             )
 
 
+class OpenRouterLLMClient(LLMClient):
+    """OpenRouter LLM client (DeepSeek by default) with manual tool dispatch."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model_name: str | None = None,
+    ) -> None:
+        import os
+
+        self._api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
+        self.model_name = (
+            model_name
+            or os.environ.get("OPENROUTER_MODEL")
+            or os.environ.get("DEFAULT_LLM_MODEL")
+            or "deepseek/deepseek-chat"
+        )
+
+    def generate(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> LLMResponse:
+        """Call OpenRouter to reason and propose next actions or final answer."""
+        if not self._api_key:
+            return LLMResponse(
+                content="Error: OPENROUTER_API_KEY is not configured in .env or environment.",
+                tool_calls=[],
+            )
+
+        import json
+        import httpx
+
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://aura-gateway.local",
+            "X-Title": "AURA Multi-Agent Gateway",
+        }
+
+        # Convert tool schemas to standard OpenAI/OpenRouter function format
+        openrouter_tools = []
+        for t in tools:
+            openrouter_tools.append({
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": t.get("parameters", {}),
+                },
+            })
+
+        formatted_messages: list[dict[str, Any]] = []
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content") or ""
+            tc_raw = m.get("tool_calls")
+            if tc_raw:
+                formatted_messages.append({
+                    "role": role,
+                    "content": content or None,
+                    "tool_calls": [
+                        {
+                            "id": tc.get("call_id") or tc.get("tool_name", "call_1"),
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("tool_name"),
+                                "arguments": json.dumps(tc.get("arguments", {})),
+                            },
+                        }
+                        for tc in tc_raw
+                    ],
+                })
+            elif role == "tool":
+                formatted_messages.append({
+                    "role": "tool",
+                    "tool_call_id": m.get("tool_call_id") or "tool",
+                    "content": content,
+                })
+            else:
+                formatted_messages.append({
+                    "role": role,
+                    "content": content,
+                })
+
+        payload: dict[str, Any] = {
+            "model": self.model_name,
+            "messages": formatted_messages,
+            "temperature": 0.2,
+        }
+        if openrouter_tools:
+            payload["tools"] = openrouter_tools
+            payload["tool_choice"] = "auto"
+
+        try:
+            with httpx.Client(timeout=35.0) as client:
+                resp = client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            choice = data["choices"][0]["message"]
+            text_content = choice.get("content") or ""
+            tool_calls: list[ToolCallProposal] = []
+
+            for tc in choice.get("tool_calls") or []:
+                fn = tc.get("function", {})
+                raw_args = fn.get("arguments", "{}")
+                if isinstance(raw_args, str):
+                    try:
+                        args = json.loads(raw_args)
+                    except Exception:
+                        args = {}
+                else:
+                    args = dict(raw_args)
+
+                tool_calls.append(
+                    ToolCallProposal(
+                        call_id=tc.get("id") or fn.get("name", "call_1"),
+                        tool_name=fn.get("name", "unknown"),
+                        arguments=args,
+                    )
+                )
+
+            return LLMResponse(content=text_content, tool_calls=tool_calls)
+
+        except Exception as exc:
+            return LLMResponse(
+                content=f"Error communicating with OpenRouter ({self.model_name}): {exc}",
+                tool_calls=[],
+            )
+
+
+
 class AgentRunResult(BaseModel):
     """Summary of a bounded agent run."""
     run_id: str

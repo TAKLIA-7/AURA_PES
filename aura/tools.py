@@ -330,8 +330,37 @@ class ReadFileAdapter(BaseToolAdapter):
     def __init__(self, storage: dict[str, str] | None = None) -> None:
         super().__init__(ToolAction.READ_FILE)
         self.storage = storage or {
-            "public/readme": "# AURA Project\nWelcome to AURA enforcement gateway.",
-            "public/faq": "Q: What is AURA?\nA: Security layer for AI agents.",
+            "public/readme": (
+                "# AURA Project: AI Agent Security & Execution Enforcement Gateway\n\n"
+                "## Core Technical Architecture & Security Invariants:\n\n"
+                "1. Strict Block (Deterministic Policy Enforcement & Fail-Closed):\n"
+                "   - Deterministic policy rules (RBAC, Resource Existence, Rate Limits, and Confidential Egress) are evaluated before any LLM reasoning.\n"
+                "   - Any BLOCK decision is monotonic, final, and can NEVER be overridden or downgraded by JEV or LLM persuasion.\n"
+                "   - Fail-Closed: If external services, JEV, or network connections time out, AURA strictly defaults to BLOCK.\n\n"
+                "2. Human-in-the-Loop Approval (Digest-Bound & Replay Defense):\n"
+                "   - Sensitive financial, fulfillment, and infrastructure actions (CREATE_REFUND, CREATE_REPLACEMENT, CREATE_RESERVATION, api/internal_deploy) require operator sign-off.\n"
+                "   - Digest-Bound: Approval records are cryptographically bound to the canonical SHA-256 parameter digest.\n"
+                "   - Replay Defense: Approvals are single-use and atomically consumed upon execution. Parameter tampering or reuse is rejected.\n"
+                "   - Self-Approval Prevention: Agents are strictly prohibited from approving their own requests.\n\n"
+                "3. Idempotency & Duplicate Prevention:\n"
+                "   - Authoritative SQLite-backed idempotency store tracks caller-scoped idempotency keys.\n"
+                "   - Retrying an identical request returns the cached result with zero duplicate side effects (adapter call count does not increment).\n"
+                "   - Idempotency Conflict: Submitting an altered request with an existing key is blocked with IDEMPOTENCY_CONFLICT.\n\n"
+                "4. Tamper-Evident SHA-256 Audit Chaining:\n"
+                "   - Every request, policy decision, risk level, and execution outcome is appended to an immutable cryptographic hash chain.\n"
+                "   - Each entry H_n = SHA-256(H_{n-1} || seq || timestamp || action || decision || risk || ...).\n"
+                "   - Any retroactive database modification or record deletion mathematically invalidates the chain.\n\n"
+                "5. Just-in-Time Evaluation (JEV):\n"
+                "   - Real LLM evaluator (DeepSeek via OpenRouter or Gemini) invoked ONLY when deterministic rules return DEFER for ambiguous actions.\n"
+                "   - Monotone Risk Combination: JEV can elevate risk or escalate to APPROVAL, but cannot lower risk or grant unauthorized permissions.\n\n"
+                "6. Data Taint Tracking & Confidential Egress Protection:\n"
+                "   - Reading confidential resources tags the session RunContext as TAINTED.\n"
+                "   - Any subsequent outbound communication (SEND_EMAIL, CALL_API) is intercepted and strictly BLOCKED.\n\n"
+                "7. Multi-Agent Orchestration & Typed Adapters:\n"
+                "   - Controlled delegation where each agent retains its own distinct identity and permissions without privilege inheritance.\n"
+                "   - Agents only receive typed JSON parameter schemas; all execution occurs through private gateway adapters with zero direct credentials."
+            ),
+            "public/faq": "Q: What is AURA?\nA: Security and execution enforcement gateway for multi-agent systems.",
             "internal/report_q4": "Q4 Financials: Revenue up 15%. Internal only.",
             "internal/roadmap": "2027 Roadmap: Expand JEV capabilities.",
             "confidential/hr_records": "CONFIDENTIAL HR RECORDS: Employee salaries and PII.",

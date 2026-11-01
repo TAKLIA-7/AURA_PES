@@ -52,6 +52,10 @@ class ApprovalManager:
         """List all pending approval records."""
         return self.store.list_pending_approvals()
 
+    def list_all_approvals(self, limit: int = 20) -> list[ApprovalRecord]:
+        """List all recent approval records regardless of status."""
+        return self.store.list_all_approvals(limit=limit)
+
     def create_approval_request(
         self,
         request: AuraRequest,

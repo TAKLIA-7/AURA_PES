@@ -429,6 +429,38 @@ class AuraStore:
                 records.append(r)
             return records
 
+    def list_all_approvals(self, limit: int = 20) -> list[Any]:
+        """List all recent approval records (pending, approved, consumed, denied)."""
+        from aura.models import ApprovalRecord, ApprovalStatus
+        conn = self._get_connection()
+        with self._lock:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT * FROM approvals ORDER BY created_at DESC LIMIT ?;",
+                (limit,),
+            )
+            records = []
+            for row in cur.fetchall():
+                records.append(
+                    ApprovalRecord(
+                        approval_id=row["approval_id"],
+                        request_id=row["request_id"],
+                        action=ToolAction(row["action"]),
+                        stored_params=json.loads(row["stored_params"]) if row["stored_params"] else {},
+                        action_digest=row["action_digest"],
+                        requester_agent_id=row["requester_agent_id"],
+                        approver_id=row["approver_id"],
+                        status=ApprovalStatus(row["status"]),
+                        policy_version=row["policy_version"] or "",
+                        resource_version=row["resource_version"] or "",
+                        ttl_seconds=row["ttl_seconds"],
+                        created_at=datetime.fromisoformat(row["created_at"]),
+                        resolved_at=datetime.fromisoformat(row["resolved_at"]) if row["resolved_at"] else None,
+                        consumed_at=datetime.fromisoformat(row["consumed_at"]) if row["consumed_at"] else None,
+                    )
+                )
+            return records
+
     def reconcile_idempotency(
         self,
         agent_id: str,
@@ -506,6 +538,38 @@ class AuraStore:
             cur = conn.cursor()
             cur.execute(
                 "SELECT * FROM approvals WHERE status = 'PENDING' ORDER BY created_at DESC;"
+            )
+            records = []
+            for row in cur.fetchall():
+                records.append(
+                    ApprovalRecord(
+                        approval_id=row["approval_id"],
+                        request_id=row["request_id"],
+                        action=ToolAction(row["action"]),
+                        stored_params=json.loads(row["stored_params"]) if row["stored_params"] else {},
+                        action_digest=row["action_digest"],
+                        requester_agent_id=row["requester_agent_id"],
+                        approver_id=row["approver_id"],
+                        status=ApprovalStatus(row["status"]),
+                        policy_version=row["policy_version"] or "",
+                        resource_version=row["resource_version"] or "",
+                        ttl_seconds=row["ttl_seconds"],
+                        created_at=datetime.fromisoformat(row["created_at"]),
+                        resolved_at=datetime.fromisoformat(row["resolved_at"]) if row["resolved_at"] else None,
+                        consumed_at=datetime.fromisoformat(row["consumed_at"]) if row["consumed_at"] else None,
+                    )
+                )
+            return records
+
+    def list_all_approvals(self, limit: int = 20) -> list[Any]:
+        """List all recent approval records (pending, approved, consumed, denied)."""
+        from aura.models import ApprovalRecord, ApprovalStatus
+        conn = self._get_connection()
+        with self._lock:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT * FROM approvals ORDER BY created_at DESC LIMIT ?;",
+                (limit,),
             )
             records = []
             for row in cur.fetchall():

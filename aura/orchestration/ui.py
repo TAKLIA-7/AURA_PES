@@ -136,29 +136,46 @@ class AuraTerminalUI:
 
     def render_security_events(self) -> None:
         """Display security block events and adversarial containment alerts."""
-        if not self.security_events:
+        all_events: list[dict[str, Any]] = list(self.security_events)
+
+        # Also pull any BLOCK entries dynamically from the authoritative audit log
+        try:
+            audit_entries = self.gateway.store.get_all_audit_entries(limit=50)
+            for e in audit_entries:
+                if getattr(e.decision, "value", str(e.decision)) == "BLOCK":
+                    all_events.append({
+                        "timestamp": e.timestamp.strftime("%H:%M:%S"),
+                        "event_type": "SECURITY_BLOCK",
+                        "agent_id": f"{e.agent_id} ({e.agent_role})",
+                        "action": "INTERCEPT & BLOCK",
+                        "error": f"Rule '{', '.join(e.rule_ids or ['policy'])}' blocked action '{e.action.value}' (Risk: {e.risk_level.name})",
+                    })
+        except Exception:
+            pass
+
+        if not all_events:
             self.console.print(
                 Panel("[green][OK] Zero security breaches or blocked attacks detected in this session.[/green]", title="[SECURITY] Security Event Monitor", border_style="green")
             )
             return
 
         table = Table(
-            title="[SECURITY ALERTS] AURA Enforcement Monitor",
+            title=f"[SECURITY ALERTS] AURA Enforcement Monitor ({len(all_events)} Total Events)",
             title_style="bold red",
             border_style="red",
             expand=True,
         )
         table.add_column("Time", width=12)
         table.add_column("Event Type", style="bold red", width=22)
-        table.add_column("Entity / Agent", style="magenta", width=16)
-        table.add_column("Enforcement Action", style="bold yellow", width=18)
+        table.add_column("Entity / Agent", style="magenta", width=20)
+        table.add_column("Enforcement Action", style="bold yellow", width=20)
         table.add_column("Security Details", style="white")
 
-        for ev in self.security_events[-8:]:
-            ts = ev.get("timestamp", "")[-12:-4] if "timestamp" in ev else "N/A"
+        for ev in all_events[-10:]:
+            ts = ev.get("timestamp", "")[-12:-4] if "timestamp" in ev and len(ev.get("timestamp", "")) >= 12 else ev.get("timestamp", "N/A")
             etype = ev.get("event_type", "SECURITY_ALERT")
             agent = ev.get("agent_id") or ev.get("sender_id") or "Gateway"
-            action = "INTERCEPT & BLOCK"
+            action = ev.get("action", "INTERCEPT & BLOCK")
             details = ev.get("error") or ev.get("reason") or f"Blocked tool calls: {ev.get('blocked', 1)}"
 
             table.add_row(ts, etype, agent, action, str(details))
@@ -369,35 +386,63 @@ class AuraTerminalUI:
 
         pending = self.gateway.approval_manager.list_pending_approvals()
         if not pending:
-            self.console.print("[dim cyan]No pending human approvals currently in queue.[/dim cyan]")
-            gen = Prompt.ask("[yellow]Would you like to generate a sample approval request (e.g., Facility Reservation)? [Y/n][/yellow]", default="y")
-            if gen.strip().lower() != "n":
-                req = AuraRequest(
-                    request_id=f"req-sample-apr-{int(time.time())}",
-                    action=ToolAction.CREATE_RESERVATION,
-                    params={
-                        "room_id": "rooms/maple",
-                        "room_name": "Maple Conference Room",
-                        "date": "2026-11-05",
-                        "start_time": "14:00",
-                        "duration_hours": 2,
-                        "attendees": 4,
-                        "total_price": 80.0,
-                        "requested_by": "analyst_agent",
-                        "reason": "Executive board review with projector requirement",
-                    },
-                    agent=AgentIdentity(agent_id="executor_agent", role="executor"),
+            self.console.print(
+                Panel(
+                    "[bold green]✔ Zero Pending Approvals in Queue.[/bold green]\n"
+                    "All authorization requests have been resolved or consumed. Approved actions are active in system telemetry and audit records.",
+                    title="[APPROVAL QUEUE: 0 PENDING]",
+                    border_style="green",
                 )
-                ctx = RunContext(request=req)
-                res = self.gateway.handle(req, ctx)
-                pending = self.gateway.approval_manager.list_pending_approvals()
+            )
+            # Display history of resolved approvals if any exist
+            try:
+                recent = self.gateway.approval_manager.list_all_approvals(limit=10)
+                resolved = [r for r in recent if r.status.value != "PENDING"]
+                if resolved:
+                    self.console.print()
+                    hist_table = Table(title="[bold cyan]Resolved Authorization History[/bold cyan]", border_style="cyan", expand=True)
+                    hist_table.add_column("Approval ID", style="bold yellow", width=18)
+                    hist_table.add_column("Action", style="cyan", width=20)
+                    hist_table.add_column("Agent ID", style="magenta", width=18)
+                    hist_table.add_column("Status", width=14)
+                    hist_table.add_column("Approver", style="white", width=22)
+                    hist_table.add_column("Action Digest", style="dim white", width=16)
 
-        if not pending:
-            self.console.print("[dim]Returning to command center.[/dim]")
+                    for r in resolved:
+                        st_color = "green" if r.status.value in ("APPROVED", "CONSUMED") else "red"
+                        st_badge = f"[{st_color}][{r.status.value}][/{st_color}]"
+                        hist_table.add_row(
+                            r.approval_id,
+                            r.action.value,
+                            r.requester_agent_id,
+                            st_badge,
+                            r.approver_id or "compliance_director",
+                            f"{r.action_digest[:10]}...",
+                        )
+                    self.console.print(hist_table)
+            except Exception:
+                pass
             return
 
         self.console.print(f"\n[bold white]Found {len(pending)} pending approval request(s):[/bold white]\n")
-        apr = pending[0]
+
+        if len(pending) > 1:
+            table = Table(title="[bold yellow]Pending Human Approval Requests[/bold yellow]", border_style="yellow", expand=True)
+            table.add_column("#", width=4)
+            table.add_column("Approval ID", style="bold yellow", width=18)
+            table.add_column("Agent ID", style="magenta", width=18)
+            table.add_column("Action", style="cyan", width=20)
+            table.add_column("Action Digest", style="dim white", width=16)
+            for idx, a in enumerate(pending, 1):
+                table.add_row(str(idx), a.approval_id, a.requester_agent_id, a.action.value, f"{a.action_digest[:10]}...")
+            self.console.print(table)
+            sel_idx = Prompt.ask(f"[bold cyan]Select approval to process (1-{len(pending)})[/bold cyan]", default="1").strip()
+            try:
+                apr = pending[int(sel_idx) - 1]
+            except Exception:
+                apr = pending[0]
+        else:
+            apr = pending[0]
 
         card = Table(show_header=False, border_style="yellow", expand=True)
         card.add_column("Field", style="bold cyan", width=24)
@@ -433,10 +478,16 @@ class AuraTerminalUI:
                 approved=True,
             )
             self.console.print("[bold green]✔ APPROVED by compliance_director. Cryptographic parameter binding verified.[/bold green]")
+            agent_obj = (
+                self.gateway.rbac_manager.get_agent(apr.requester_agent_id)
+                if self.gateway.rbac_manager
+                else AgentIdentity(agent_id=apr.requester_agent_id, role="executor")
+            ) or AgentIdentity(agent_id=apr.requester_agent_id, role="executor")
+
             exec_res = self.gateway.execute_approved_action(
                 approval_id=apr.approval_id,
-                claiming_agent=AgentIdentity(agent_id=apr.requester_agent_id, role="executor"),
-                run_ctx=RunContext(request=AuraRequest(request_id=apr.request_id, action=apr.action, params=apr.stored_params, agent=AgentIdentity(agent_id=apr.requester_agent_id, role="executor"))),
+                claiming_agent=agent_obj,
+                run_ctx=RunContext(request=AuraRequest(request_id=apr.request_id, action=apr.action, params=apr.stored_params, agent=agent_obj)),
             )
             self.console.print(f"[bold green]✔ Execution Succeeded: Status={exec_res.execution_status}[/bold green]")
             self.console.print(f"  Execution Result: {exec_res.execution_result}")
@@ -622,6 +673,7 @@ class AuraTerminalUI:
         table.add_row("Gateway Protected Calls", str(report.get("total_tool_calls", 0)))
         table.add_row("Policy Decisions", f"[green]ALLOW: {report.get('allow_count', 0)}[/green] | [yellow]APPROVAL: {report.get('approval_count', 0)}[/yellow] | [red]BLOCK: {report.get('block_count', 0)}[/red]")
         table.add_row("Cryptographic Trace ID", f"[dim]{report.get('trace_id', 'N/A')}[/dim]")
+        table.add_row("Tamper-Evident SHA-256", f"[bold green]{report.get('audit_integrity', 'PASS (Cryptographically Chained)')}[/bold green]")
         table.add_row("Elapsed Time", f"{report.get('duration_ms', 0):.2f} ms")
         table.add_row("Final Status", f"[bold green]{report.get('status', 'SUCCESS')}[/bold green]")
         table.add_row("Final Outcome", report.get("outcome_summary", "Task completed successfully under full gateway enforcement."))

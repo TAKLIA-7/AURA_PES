@@ -62,3 +62,8 @@ policy:
     - create_replacement
     - api/internal_deploy
 
+  # Default Model & JEV Configuration
+  model_configuration:
+    default_provider: "openrouter"
+    default_model: "deepseek/deepseek-chat"
+

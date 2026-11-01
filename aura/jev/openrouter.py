@@ -28,15 +28,20 @@ OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
 class OpenRouterJEVProvider(JEVProvider):
-    """OpenRouter JEV provider."""
+    """OpenRouter JEV provider (DeepSeek by default)."""
 
     def __init__(
         self,
         api_key: str | None = None,
-        model_name: str = "anthropic/claude-3.5-sonnet",
+        model_name: str | None = None,
     ) -> None:
         self._api_key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
-        self._model_name = model_name
+        self._model_name = (
+            model_name
+            or os.environ.get("OPENROUTER_MODEL")
+            or os.environ.get("DEFAULT_LLM_MODEL")
+            or "deepseek/deepseek-chat"
+        )
 
     @property
     def provider_name(self) -> str:

@@ -92,6 +92,7 @@ class AuraGateway:
         jev_provider: JEVProvider | None = None,
         db_path: str | Path = ":memory:",
         use_gemini: bool = False,
+        use_openrouter: bool = False,
     ) -> AuraGateway:
         """Create a fully configured gateway from YAML config files and SQLite store."""
         from pathlib import Path
@@ -124,7 +125,11 @@ class AuraGateway:
         tools = ToolRegistry.create_default()
 
         if jev_provider is None:
-            if use_gemini:
+            if use_openrouter:
+                from aura.jev.openrouter import OpenRouterJEVProvider
+
+                jev_provider = OpenRouterJEVProvider()
+            elif use_gemini:
                 from aura.jev.gemini import GeminiJEVProvider
 
                 jev_provider = GeminiJEVProvider()
