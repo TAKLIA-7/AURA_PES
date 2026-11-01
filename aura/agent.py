@@ -41,6 +41,22 @@ from aura.models import (
 )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# OpenRouter Switchable AI Models Registry
+# ─────────────────────────────────────────────────────────────────────────────
+
+MODELS: dict[str, str] = {
+    "A": "bytedance-seed/seedream-4.5",
+    "B": "anthropic/claude-haiku-4.5",
+    "C": "tecent/hy3",
+    "D": "deepseek/deepseek-chat",
+}
+
+MODEL_ALIASES: dict[str, str] = {
+    "tecent/hy3": "tencent/hy3",
+}
+
+
 class AuraAgentState(TypedDict):
     """The LangGraph state passed between all agent nodes."""
     messages: Annotated[list[BaseMessage], add_messages]
@@ -58,26 +74,67 @@ class AuraAgentState(TypedDict):
 class AuraMultiAgentSystem:
     """LangGraph-powered Multi-Agent System with AURA Security Enforcement."""
 
-    def __init__(self, gateway: Optional[AuraGateway] = None, max_steps: int = 8, timeout_seconds: float = 60.0):
+    def __init__(
+        self,
+        gateway: Optional[AuraGateway] = None,
+        max_steps: int = 8,
+        timeout_seconds: float = 60.0,
+        model_key: str = "D",
+    ) -> None:
         self.gateway = gateway or AuraGateway()
         self.max_steps = max_steps
         self.timeout_seconds = timeout_seconds
+        self.model_key = model_key
+        self.active_model = MODELS.get(model_key, MODELS["D"])
 
-        # Initialize Gemini LLM if GOOGLE_API_KEY is available
-        self.llm = None
-        google_api_key = os.environ.get("GOOGLE_API_KEY")
-        if google_api_key:
-            try:
-                from langchain_google_genai import ChatGoogleGenerativeAI
-                self.llm = ChatGoogleGenerativeAI(
-                    model="gemini-2.5-flash",
-                    api_key=google_api_key,
-                    temperature=0.0,
-                )
-            except Exception:
-                self.llm = None
+        # Initialize OpenAI Client via OpenRouter
+        self.client = None
+        self._init_openai_client()
 
         self.graph = self._build_graph()
+
+    def _init_openai_client(self) -> None:
+        """Initialize the OpenAI client pointing to OpenRouter."""
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not api_key:
+            try:
+                from google.colab import userdata
+                api_key = userdata.get("OPENROUTER_API_KEY")
+            except Exception:
+                pass
+
+        if api_key:
+            try:
+                from openai import OpenAI
+                self.client = OpenAI(
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key=api_key,
+                    timeout=10.0,
+                )
+            except Exception:
+                self.client = None
+
+    def set_model(self, model_key_or_name: str) -> str:
+        """Switch the active AI model dynamically.
+        
+        Accepts 'A', 'B', 'C', 'D' or a model ID string.
+        """
+        key = model_key_or_name.strip().upper()
+        if key in MODELS:
+            self.model_key = key
+            self.active_model = MODELS[key]
+        else:
+            for k, v in MODELS.items():
+                if (
+                    v.lower() == model_key_or_name.strip().lower()
+                    or v.split("/")[-1].lower() == model_key_or_name.strip().lower()
+                ):
+                    self.model_key = k
+                    self.active_model = v
+                    return self.active_model
+            self.active_model = model_key_or_name
+            self.model_key = "CUSTOM"
+        return self.active_model
 
     def _build_graph(self):
         """Construct the LangGraph StateGraph connecting supervisor and specialist agents."""
@@ -278,12 +335,14 @@ class AuraMultiAgentSystem:
         subject = "Scheduled Report"
         body = "Here is the summary."
 
-        email_match = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", task)
+        # Search both the user prompt and any previous messages/injected text
+        combined_text = task + " " + " ".join(str(getattr(m, "content", "")) for m in state.get("messages", []))
+        email_match = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", combined_text)
         if email_match:
             to_addr = email_match.group(0)
-        elif "competitor" in task.lower():
+        elif "competitor" in combined_text.lower():
             to_addr = "audit@competitor.com"
-        elif "external" in task.lower():
+        elif "external" in combined_text.lower():
             to_addr = "external-partner@partner.org"
 
         if run_ctx.tainted:
@@ -371,8 +430,9 @@ class AuraMultiAgentSystem:
                     summaries.append(f"Operation '{r.tool_name}': {r.decision.value} ({r.execution_status.value})")
             response_text = "Execution completed:\n" + "\n\n".join(summaries)
 
-        # If Gemini LLM is available, use it to synthesize a comprehensive response
-        if self.llm and results:
+        # If OpenRouter LLM client is available, synthesize response using the selected model
+        if self.client and results:
+            resolved_model = MODEL_ALIASES.get(self.active_model, self.active_model)
             prompt = (
                 f"You are the AURA Multi-Agent Security Assistant.\n"
                 f"User task: {state.get('task', '')}\n\n"
@@ -386,9 +446,17 @@ class AuraMultiAgentSystem:
                 f"- Only report success if execution_status is COMPLETED.\n"
             )
             try:
-                ai_resp = self.llm.invoke([HumanMessage(content=prompt)])
-                response_text = str(ai_resp.content)
+                chat_resp = self.client.chat.completions.create(
+                    model=resolved_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=600,
+                    temperature=0.0,
+                    timeout=10.0,
+                )
+                if chat_resp.choices and chat_resp.choices[0].message.content:
+                    response_text = chat_resp.choices[0].message.content.strip()
             except Exception:
+                # Safe failover — deterministic response retained
                 pass
 
         return {

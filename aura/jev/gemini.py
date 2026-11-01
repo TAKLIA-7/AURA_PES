@@ -60,7 +60,11 @@ class GeminiJEVProvider(JEVProvider):
 
     def __init__(self, model: str = "gemini-2.0-flash") -> None:
         self._model = model
-        self._api_key: str = os.environ.get("GOOGLE_API_KEY", "")
+        self._api_key: str = (
+            os.environ.get("GOOGLE_API_KEY")
+            or os.environ.get("GEMINI_API_KEY")
+            or ""
+        )
 
     # ── properties ───────────────────────────────────────────────────
 
@@ -111,7 +115,8 @@ class GeminiJEVProvider(JEVProvider):
         JEVResult
             Always returns — never raises.
         """
-        if not self._api_key:
+        api_key = self._api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        if not api_key:
             return self._failure_result("GOOGLE_API_KEY not set")
 
         start = time.perf_counter()
@@ -155,17 +160,8 @@ class GeminiJEVProvider(JEVProvider):
         start: float,
         attempts: int,
     ) -> JEVResult | None:
-        """Execute a single Gemini call.
-
-        Returns ``None`` when the context exceeds the token cap (caller
-        should stop retrying).  Raises on timeout, JSON parse failure,
-        or SDK errors so the caller can catch and retry.
-        """
-        # Lazy import so the SDK is optional at install time.
-        import google.generativeai as genai  # type: ignore[import-untyped]
-
-        genai.configure(api_key=self._api_key)
-
+        """Execute a single Gemini call via google-genai or legacy SDK."""
+        api_key = self._api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         minimal_context = self._build_minimal_context(
             request, context, max_context_tokens,
         )
@@ -183,27 +179,48 @@ class GeminiJEVProvider(JEVProvider):
             f"Return ONLY valid JSON with this schema:\n{_RESPONSE_SCHEMA}"
         )
 
-        model = genai.GenerativeModel(self._model)
+        raw_text = ""
+        prompt_tokens = estimated_tokens
+        cand_tokens = 0
 
-        response = await asyncio.wait_for(
-            asyncio.to_thread(model.generate_content, prompt),
-            timeout=timeout_seconds,
-        )
+        # Try official google.genai SDK first
+        try:
+            from google import genai
+            client = genai.Client(api_key=api_key)
+
+            def _call_genai():
+                return client.models.generate_content(
+                    model=self._model,
+                    contents=prompt,
+                )
+
+            response = await asyncio.wait_for(
+                asyncio.to_thread(_call_genai),
+                timeout=timeout_seconds,
+            )
+            raw_text = response.text or ""
+            usage = getattr(response, "usage_metadata", None)
+            if usage:
+                prompt_tokens = getattr(usage, "prompt_token_count", estimated_tokens)
+                cand_tokens = getattr(usage, "candidates_token_count", 0)
+        except ImportError:
+            import google.generativeai as legacy_genai  # type: ignore[import-untyped]
+            legacy_genai.configure(api_key=api_key)
+            model = legacy_genai.GenerativeModel(self._model)
+            response = await asyncio.wait_for(
+                asyncio.to_thread(model.generate_content, prompt),
+                timeout=timeout_seconds,
+            )
+            raw_text = response.text or ""
+            usage = getattr(response, "usage_metadata", None)
+            if usage:
+                prompt_tokens = getattr(usage, "prompt_token_count", estimated_tokens)
+                cand_tokens = getattr(usage, "candidates_token_count", 0)
 
         latency_ms = (time.perf_counter() - start) * 1000
-
-        text = self._extract_json_text(response.text)
+        text = self._extract_json_text(raw_text)
         data: dict = json.loads(text)  # may raise JSONDecodeError
         assessment = JEVAssessment(**data)
-
-        # Token accounting from response metadata (best-effort).
-        usage = getattr(response, "usage_metadata", None)
-        input_tokens: int = (
-            usage.prompt_token_count if usage else estimated_tokens
-        )
-        output_tokens: int = (
-            usage.candidates_token_count if usage else len(text) // 4
-        )
 
         return JEVResult(
             invoked=True,
@@ -211,8 +228,8 @@ class GeminiJEVProvider(JEVProvider):
             provider=self.provider_name,
             model=self.model_name,
             latency_ms=latency_ms,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+            input_tokens=prompt_tokens,
+            output_tokens=cand_tokens or (len(text) // 4),
             estimated_cost_usd=0.0,
             attempts=attempts,
             schema_valid=True,

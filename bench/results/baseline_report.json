@@ -1,0 +1,66 @@
+{
+  "timestamp": "2026-10-31T22:26:42Z",
+  "git_commit": "276f3ba1f28c9bb4b763556ad2789e8adc515a79",
+  "config": {
+    "policy_version": "1.0.0",
+    "db_mode": "WAL",
+    "synchronous": "FULL",
+    "jev_provider": "MockJEVProvider"
+  },
+  "results": [
+    {
+      "concurrency": 1,
+      "total_requests": 100,
+      "duration_seconds": 1.964,
+      "throughput_rps": 50.9,
+      "mean_latency_ms": 19.57,
+      "p50_latency_ms": 19.337,
+      "p95_latency_ms": 21.824,
+      "min_latency_ms": 17.022,
+      "max_latency_ms": 35.896,
+      "error_count": 0,
+      "component_breakdown_ms": {
+        "mean_rbac_ms": 0.0,
+        "mean_rules_ms": 0.0,
+        "mean_persist_ms": 0.0,
+        "mean_tool_ms": 0.0
+      }
+    },
+    {
+      "concurrency": 8,
+      "total_requests": 100,
+      "duration_seconds": 3.066,
+      "throughput_rps": 32.6,
+      "mean_latency_ms": 242.641,
+      "p50_latency_ms": 243.884,
+      "p95_latency_ms": 302.357,
+      "min_latency_ms": 88.451,
+      "max_latency_ms": 334.541,
+      "error_count": 0,
+      "component_breakdown_ms": {
+        "mean_rbac_ms": 0.0,
+        "mean_rules_ms": 0.0,
+        "mean_persist_ms": 0.0,
+        "mean_tool_ms": 0.0
+      }
+    },
+    {
+      "concurrency": 32,
+      "total_requests": 100,
+      "duration_seconds": 2.764,
+      "throughput_rps": 36.2,
+      "mean_latency_ms": 847.014,
+      "p50_latency_ms": 962.752,
+      "p95_latency_ms": 1265.223,
+      "min_latency_ms": 252.354,
+      "max_latency_ms": 1379.22,
+      "error_count": 0,
+      "component_breakdown_ms": {
+        "mean_rbac_ms": 0.0,
+        "mean_rules_ms": 0.0,
+        "mean_persist_ms": 0.0,
+        "mean_tool_ms": 0.0
+      }
+    }
+  ]
+}

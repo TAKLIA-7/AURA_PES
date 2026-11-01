@@ -254,6 +254,9 @@ def run_scenario_5(gateway: AuraGateway) -> bool:
 def main() -> None:
     """CLI Entry Point."""
     parser = argparse.ArgumentParser(description="AURA Security Enforcement CLI")
+    parser.add_argument("--multi-agent", "--multiagent", dest="multi_agent", nargs="?", const="default", help="Run Collaborative Multi-Agent Security Kernel & Governance Engine")
+    parser.add_argument("--model", "-m", default=None, help="Select model alias (A, B, C, D) or model slug")
+    parser.add_argument("--policies", action="store_true", help="Display active organizational policies and agent roles")
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
     # TUI
@@ -290,6 +293,26 @@ def main() -> None:
     approve_all_cmd.add_argument("--secret", default="approve-secret-123", help="Approver secret")
 
     args = parser.parse_args()
+
+    # Multi-Agent Collaborative Governance Pipeline
+    if args.multi_agent is not None:
+        gateway = AuraGateway()
+        from aura.multiagent_governor import MultiAgentGovernor
+        gov = MultiAgentGovernor(gateway=gateway)
+        if args.multi_agent == "default" or not args.multi_agent.strip():
+            gov.run_full_pipeline()
+        else:
+            gov.run_dynamic_task(args.multi_agent)
+        return
+
+    # Policies Inspector
+    if args.policies:
+        gateway = AuraGateway()
+        from aura.multiagent_governor import MultiAgentGovernor
+        gov = MultiAgentGovernor(gateway=gateway)
+        gov.print_header()
+        gov.phase_1_inspect_registry()
+        return
 
     # Default command: launch the interactive TUI
     if args.command in ("tui", None):

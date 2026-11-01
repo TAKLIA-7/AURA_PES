@@ -2,6 +2,93 @@
 # Agent identities and roles are TRUSTED — assigned by the gateway, never self-declared.
 
 agents:
+  admin_agent:
+    id: "admin_agent"
+    role: "admin"
+    description: "Performs explicitly permitted administrative operations"
+    allowed_tools:
+      - "read_file"
+      - "run_query"
+      - "call_api"
+      - "send_email"
+    allowed_resources:
+      - "doc:*"
+      - "db:*"
+      - "api:admin"
+      - "api:*"
+      - "confidential/*"
+      - "public/*"
+      - "internal/*"
+      - "*"
+    allowed_operations:
+      - "read"
+      - "query"
+      - "admin"
+      - "send"
+    rate_limits:
+      requests_per_minute: 15
+      max_concurrent: 2
+
+  analyst_agent:
+    id: "analyst_agent"
+    role: "analyst"
+    description: "Coordinates multi-agent analysis workflows, queries databases, and delegates tasks"
+    allowed_tools:
+      - "read_file"
+      - "run_query"
+      - "call_api"
+    allowed_resources:
+      - "public/*"
+      - "internal/*"
+      - "doc:*"
+      - "db:*"
+      - "api:*"
+    allowed_operations:
+      - "read"
+      - "query"
+    rate_limits:
+      requests_per_minute: 30
+      max_concurrent: 5
+
+  reader_agent:
+    id: "reader_agent"
+    role: "reader"
+    description: "Specialist document reader restricted strictly to public documents"
+    allowed_tools:
+      - "read_file"
+      - "call_api"
+    allowed_resources:
+      - "public/*"
+      - "doc:public_report"
+      - "api:*"
+    allowed_operations:
+      - "read"
+    rate_limits:
+      requests_per_minute: 30
+      max_concurrent: 5
+
+  mailer_agent:
+    id: "mailer_agent"
+    role: "mailer"
+    description: "Outbound email and communications agent"
+    allowed_tools:
+      - "read_file"
+      - "send_email"
+      - "call_api"
+    allowed_resources:
+      - "public/*"
+      - "internal/*"
+      - "confidential/*"
+      - "doc:*"
+      - "email:outbound"
+      - "api:*"
+    allowed_operations:
+      - "read"
+      - "send"
+    rate_limits:
+      requests_per_minute: 20
+      max_concurrent: 3
+
   research_agent:
     id: "research_agent"
     role: "research"
@@ -10,6 +97,7 @@ agents:
       - "read_file"
     allowed_resources:
       - "doc:*"
+      - "public/*"
     allowed_operations:
       - "read"
     rate_limits:
@@ -49,27 +137,6 @@ agents:
       requests_per_minute: 10
       max_concurrent: 2
 
-  admin_agent:
-    id: "admin_agent"
-    role: "admin"
-    description: "Performs explicitly permitted administrative operations"
-    allowed_tools:
-      - "read_file"
-      - "run_query"
-      - "call_api"
-      - "send_email"
-    allowed_resources:
-      - "doc:*"
-      - "db:*"
-      - "api:admin"
-    allowed_operations:
-      - "read"
-      - "query"
-      - "admin"
-    rate_limits:
-      requests_per_minute: 15
-      max_concurrent: 2
-
 # Global rate limits (apply to all agents)
 global_rate_limits:
   requests_per_minute: 60
@@ -89,6 +156,8 @@ approvers:
       - "sql_agent"
       - "admin_agent"
       - "research_agent"
+      - "analyst_agent"
+      - "mailer_agent"
 
   security_officer:
     id: "security_officer"
@@ -99,4 +168,4 @@ approvers:
       - "email_agent"
       - "sql_agent"
       - "research_agent"
-
+      - "mailer_agent"

@@ -98,6 +98,16 @@ class AuraStore:
     def __init__(self, db_path: str = "aura.db") -> None:
         self._db_path: str = db_path
         self._lock: threading.Lock = threading.Lock()
+        self._mem_conn: Optional[sqlite3.Connection] = None
+
+        if db_path == ":memory:":
+            self._uri = True
+            self._conn_str = f"file:memdb_{id(self)}?mode=memory&cache=shared"
+            self._mem_conn = sqlite3.connect(self._conn_str, uri=True)
+        else:
+            self._uri = False
+            self._conn_str = db_path
+
         self._init_db()
 
     def _init_db(self) -> None:
@@ -115,8 +125,11 @@ class AuraStore:
         Every connection is configured independently because SQLite
         pragmas are per-connection, not per-database.
         """
-        conn = sqlite3.connect(self._db_path)
-        conn.execute("PRAGMA journal_mode=WAL")
+        if self._uri:
+            conn = sqlite3.connect(self._conn_str, uri=True)
+        else:
+            conn = sqlite3.connect(self._conn_str)
+            conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=FULL")
         conn.row_factory = sqlite3.Row
         return conn

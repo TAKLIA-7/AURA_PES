@@ -185,3 +185,116 @@ async def test_tui_approval_modal_popup():
 
         # Modal is dismissed
         assert not isinstance(app.screen, ApprovalModalScreen)
+
+
+@pytest.mark.asyncio
+async def test_tui_model_switching():
+    """Verify switching AI models via buttons, F4 cycle, and slash commands."""
+    from aura.agent import MODELS
+    app = AuraApp()
+    async with app.run_test() as pilot:
+        # Default model is D
+        assert app.mas.model_key == "D"
+        assert app.mas.active_model == MODELS["D"]
+
+        # 1. Click Model B button
+        btn_b = app.query_one("#btn_model_b")
+        btn_b.press()
+        await pilot.pause()
+        assert app.mas.model_key == "B"
+        assert app.mas.active_model == MODELS["B"]
+        assert "-active" in btn_b.classes
+
+        # 2. Cycle model via F4
+        app.action_cycle_model()
+        await pilot.pause()
+        assert app.mas.model_key == "C"
+
+        # 3. Switch model via slash command in prompt input
+        prompt_input = app.query_one("#prompt_input", Input)
+        prompt_input.value = "/model A"
+        app.on_input_submitted(Input.Submitted(prompt_input, "/model A"))
+        await pilot.pause()
+        assert app.mas.model_key == "A"
+        assert app.mas.active_model == MODELS["A"]
+
+
+@pytest.mark.asyncio
+async def test_tui_welcome_splash_disappears_on_chat_and_restores():
+    """Verify large ASCII welcome banner disappears on user chat and restores on Clear View."""
+    from textual.containers import Container
+    app = AuraApp()
+    async with app.run_test() as pilot:
+        # Initially welcome splash is present
+        assert app._show_welcome is True
+        splash = app.query_one("#welcome_splash", Container)
+        assert splash is not None
+
+        # User dispatches a task -> splash disappears
+        app.dispatch_user_task("Hello AURA")
+        await pilot.pause()
+        assert app._show_welcome is False
+        assert len(app.query("#welcome_splash")) == 0
+
+        # Click Clear View -> splash is restored
+        btn_clear = app.query_one("#btn_clear")
+        btn_clear.press()
+        await pilot.pause()
+        assert app._show_welcome is True
+        assert len(app.query("#welcome_splash")) == 1
+
+
+@pytest.mark.asyncio
+async def test_tui_run_logs_and_multiagent_buttons():
+    """Verify specific button for viewing agent logs and multi-agent pipeline action."""
+    from aura.models import Decision, ExecutionStatus, GatewayResult, RiskLevel
+    app = AuraApp()
+    async with app.run_test() as pilot:
+        # Simulate agent task completed
+        fake_gw_result = GatewayResult(
+            request_id="req_run_test",
+            trace_id="tr_run_test",
+            decision=Decision.ALLOW,
+            execution_status=ExecutionStatus.COMPLETED,
+            risk_level=RiskLevel.LOW,
+            tool_name="read_file",
+            result_data={"doc_id": "public/readme", "content": "Welcome to AURA"},
+        )
+        fake_res = {
+            "run_id": "run_test_abc",
+            "aura_results": [fake_gw_result],
+            "final_response": "Processed task with reader_agent.",
+            "duration_s": 0.35,
+        }
+        status_widget = Static("status", id="temp_status")
+        chat_history = app.query_one("#chat_history")
+        chat_history.mount(status_widget)
+
+        app._handle_agent_completed(fake_res, status_widget)
+        await pilot.pause()
+
+        # Check run complete card and specific button
+        log_btn = app.query_one("#btn_view_run_logs_run_test_abc")
+        assert log_btn is not None
+
+        # Press the specific button to view agent execution logs
+        log_btn.press()
+        await pilot.pause()
+        logs_cards = chat_history.query(".agent_logs_card")
+        assert len(logs_cards) >= 1
+        assert "MULTI-AGENT EXECUTION & DELEGATION TRACE" in str(logs_cards[0].render())
+
+        # Test Multi-Agent Pipeline toolbar button
+        btn_pipeline = app.query_one("#btn_demo_multiagent")
+        btn_pipeline.press()
+        await pilot.pause()
+        pipeline_cards = chat_history.query(".agent_logs_card")
+        assert len(pipeline_cards) >= 2
+        assert "MULTI-AGENT COLLABORATIVE DELEGATION PIPELINE" in " ".join(str(c.render()) for c in pipeline_cards)
+
+        # Test View Agent Logs toolbar button
+        btn_agent_logs = app.query_one("#btn_agent_logs")
+        btn_agent_logs.press()
+        await pilot.pause()
+        assert "MULTI-AGENT REGISTRY" in " ".join(str(c.render()) for c in chat_history.query(".agent_logs_card"))
+

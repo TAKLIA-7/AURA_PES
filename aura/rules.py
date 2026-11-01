@@ -267,11 +267,60 @@ def rule_sensitive_ops(
     context: RunContext,
     config: dict[str, Any],
 ) -> RuleResult:
-    """If the requested tool is in the ``sensitive_operations`` list the
-    request is escalated to ``APPROVAL`` with risk level ``MEDIUM``.
+    """Escalate sensitive operations to APPROVAL with risk level MEDIUM.
+
+    Applies to:
+    - Dangerous API operations (e.g. delete, update_permissions).
+    - Database write/mutation queries (e.g. insert_audit_note).
     """
+    if request.tool_name == "call_api":
+        op = str(request.parameters.get("operation", "")).lower()
+        always_req = config.get("always_require_approval", [])
+        always_ops = ["delete", "update_permissions", "drop", "purge"]
+        for item in always_req:
+            if isinstance(item, dict) and item.get("tool") == "call_api":
+                always_ops.extend(item.get("operations", []))
+        if op in always_ops or "delete" in op or "permission" in op:
+            return _make_result(
+                rule_id="RULE_SENSITIVE_OPS",
+                decision=Decision.APPROVAL,
+                reason_code="SENSITIVE_OP_REQUIRES_APPROVAL",
+                config=config,
+                risk_level=RiskLevel.MEDIUM,
+                tool_name=request.tool_name,
+                operation=op,
+            )
+        return _make_result(
+            rule_id="RULE_SENSITIVE_OPS",
+            decision=Decision.ALLOW,
+            reason_code="SAFE_API_OPERATION",
+            config=config,
+        )
+
+    if request.tool_name == "run_query":
+        q_name = str(request.parameters.get("query_name", ""))
+        queries = config.get("sql_queries", {})
+        q_def = queries.get(q_name, {})
+        op_type = q_def.get("operation", "")
+        if op_type == "write" or "insert" in q_name.lower() or "update" in q_name.lower() or "delete" in q_name.lower():
+            return _make_result(
+                rule_id="RULE_SENSITIVE_OPS",
+                decision=Decision.APPROVAL,
+                reason_code="SENSITIVE_OP_REQUIRES_APPROVAL",
+                config=config,
+                risk_level=RiskLevel.MEDIUM,
+                tool_name=request.tool_name,
+                query_name=q_name,
+            )
+        return _make_result(
+            rule_id="RULE_SENSITIVE_OPS",
+            decision=Decision.ALLOW,
+            reason_code="SAFE_READ_QUERY",
+            config=config,
+        )
+
     sensitive: list[str] = config.get("sensitive_operations", [])
-    if request.tool_name in sensitive:
+    if request.tool_name in sensitive and request.tool_name not in ("read_file", "call_api", "run_query"):
         return _make_result(
             rule_id="RULE_SENSITIVE_OPS",
             decision=Decision.APPROVAL,
