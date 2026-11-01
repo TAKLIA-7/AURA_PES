@@ -38,6 +38,10 @@ class ConcurrentExecutionError(Exception):
     """Raised when a request with the same idempotency key is already running."""
 
 
+class ExternalOutcomeUnknownError(Exception):
+    """Raised when an external tool execution result is ambiguous/unknown and requires reconciliation."""
+
+
 class AuraStore:
     """Authoritative SQLite store for AURA enforcement layer."""
 
@@ -286,6 +290,18 @@ class AuraStore:
             )
             return [self._row_to_audit_entry(r) for r in cur.fetchall()]
 
+    def get_all_audit_entries(self, limit: int = 50) -> list[AuditEntry]:
+        """Retrieve the most recent audit entries up to limit."""
+        conn = self._get_connection()
+        with self._lock:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT * FROM audit_log ORDER BY sequence_number DESC LIMIT ?;",
+                (limit,),
+            )
+            rows = cur.fetchall()
+            return [self._row_to_audit_entry(r) for r in reversed(rows)]
+
     def export_jsonl(self, output_path: str | Path) -> int:
         """Export the audit log to an ordered JSONL file."""
         conn = self._get_connection()
@@ -371,6 +387,58 @@ class AuraStore:
                 (status, res_json, now, agent_id, idempotency_key),
             )
 
+    def get_idempotency_record(
+        self, agent_id: str, idempotency_key: str
+    ) -> dict[str, Any] | None:
+        """Retrieve an idempotency record by agent_id and key."""
+        conn = self._get_connection()
+        with self._lock:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT * FROM idempotency_records WHERE agent_id = ? AND idempotency_key = ?;",
+                (agent_id, idempotency_key),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            res = dict(row)
+            if res.get("result_json"):
+                try:
+                    res["result"] = json.loads(res["result_json"])
+                except Exception:
+                    res["result"] = None
+            return res
+
+    def list_idempotency_records(self, limit: int = 50) -> list[dict[str, Any]]:
+        """List recent idempotency records."""
+        conn = self._get_connection()
+        with self._lock:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT * FROM idempotency_records ORDER BY updated_at DESC LIMIT ?;",
+                (limit,),
+            )
+            records = []
+            for row in cur.fetchall():
+                r = dict(row)
+                if r.get("result_json"):
+                    try:
+                        r["result"] = json.loads(r["result_json"])
+                    except Exception:
+                        r["result"] = None
+                records.append(r)
+            return records
+
+    def reconcile_idempotency(
+        self,
+        agent_id: str,
+        idempotency_key: str,
+        final_status: str,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        """Safely reconcile an unknown or in-progress idempotency record to final status."""
+        self.complete_idempotency(agent_id, idempotency_key, final_status, result)
+
     # ── Approval Operations ───────────────────────────────────────────
 
     def save_approval(self, record: Any) -> None:
@@ -429,6 +497,37 @@ class AuraStore:
                 resolved_at=datetime.fromisoformat(row["resolved_at"]) if row["resolved_at"] else None,
                 consumed_at=datetime.fromisoformat(row["consumed_at"]) if row["consumed_at"] else None,
             )
+
+    def list_pending_approvals(self) -> list[Any]:
+        """List all pending approval records."""
+        from aura.models import ApprovalRecord, ApprovalStatus
+        conn = self._get_connection()
+        with self._lock:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT * FROM approvals WHERE status = 'PENDING' ORDER BY created_at DESC;"
+            )
+            records = []
+            for row in cur.fetchall():
+                records.append(
+                    ApprovalRecord(
+                        approval_id=row["approval_id"],
+                        request_id=row["request_id"],
+                        action=ToolAction(row["action"]),
+                        stored_params=json.loads(row["stored_params"]) if row["stored_params"] else {},
+                        action_digest=row["action_digest"],
+                        requester_agent_id=row["requester_agent_id"],
+                        approver_id=row["approver_id"],
+                        status=ApprovalStatus(row["status"]),
+                        policy_version=row["policy_version"] or "",
+                        resource_version=row["resource_version"] or "",
+                        ttl_seconds=row["ttl_seconds"],
+                        created_at=datetime.fromisoformat(row["created_at"]),
+                        resolved_at=datetime.fromisoformat(row["resolved_at"]) if row["resolved_at"] else None,
+                        consumed_at=datetime.fromisoformat(row["consumed_at"]) if row["consumed_at"] else None,
+                    )
+                )
+            return records
 
     def update_approval_status(
         self,

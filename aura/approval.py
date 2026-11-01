@@ -48,6 +48,10 @@ class ApprovalManager:
     def __init__(self, store: AuraStore) -> None:
         self.store = store
 
+    def list_pending_approvals(self) -> list[ApprovalRecord]:
+        """List all pending approval records."""
+        return self.store.list_pending_approvals()
+
     def create_approval_request(
         self,
         request: AuraRequest,

@@ -85,6 +85,13 @@ class RBACManager:
         """Look up the configuration for a given agent ID."""
         return self._agents.get(agent_id)
 
+    def get_agent(self, agent_id: str) -> AgentIdentity | None:
+        """Look up AgentIdentity for a given agent ID."""
+        cfg = self._agents.get(agent_id)
+        if cfg:
+            return AgentIdentity(agent_id=cfg.agent_id, role=cfg.role)
+        return None
+
     def check_permission(
         self,
         agent: AgentIdentity,

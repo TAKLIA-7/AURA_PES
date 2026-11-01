@@ -108,11 +108,19 @@ Protected tool adapters enforce strict runtime boundaries:
 - **`CallApiAdapter`**: Allowlisted operation mapping to prevent arbitrary SSRF or external URL requests.
 - **Zero Call Invariant**: Tool adapters maintain execution counters (`call_count`). If an action is denied by RBAC, blocked by confidential egress, or interrupted by a failed durable audit write, the adapter is never invoked.
 
+### 3.5 Controlled Multi-Agent Orchestration (`aura.orchestration`)
+AURA orchestrates multiple independent AI agents while maintaining absolute isolation:
+- **Unique Trusted Identities**: Every agent has a verified `AgentIdentity` (`agent_id`, `role`, `assigned_tools`, `allowed_sensitivities`).
+- **Controlled Message Passing**: Inter-agent communication is routed through an in-memory `MessageBroker`. The authoritative SQLite audit log is **never** used as an operational IPC queue.
+- **Zero Privilege Inheritance**: A receiver agent never inherits the sender's role or permissions upon accepting a task. When executing tools, the receiver must independently pass through `AuraGateway.handle(request, run_ctx)`.
+- **Cross-Agent Taint Propagation**: Reading a confidential resource taints the run context. When delegating tasks to another agent, the taint state propagates across the message envelope, preventing cross-agent data exfiltration at downstream egress points.
+- **Cryptographic Audit Linking**: Every inter-agent message records `sender_id`, `receiver_id`, `task_id`, `timestamp`, and a SHA-256 `message_digest` immutably in the hash chain.
+
 ---
 
 ## 4. Invariant Verification Summary
-All invariants have been validated across 172 automated test suites:
+All invariants have been validated across 182 automated test suites:
 - Deterministic fast-path execution: **< 0.3 ms** p50 latency.
 - High-concurrency stress testing: **1,900+ ops/sec** across 32 concurrent workers with zero hash chain corruption.
-- Complete fail-closed posture across all failure boundaries.
+- Complete fail-closed posture across all single- and multi-agent failure boundaries.
 

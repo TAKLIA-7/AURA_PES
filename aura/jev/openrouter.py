@@ -35,7 +35,7 @@ class OpenRouterJEVProvider(JEVProvider):
         api_key: str | None = None,
         model_name: str = "anthropic/claude-3.5-sonnet",
     ) -> None:
-        self._api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
+        self._api_key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
         self._model_name = model_name
 
     @property

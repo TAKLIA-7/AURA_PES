@@ -47,6 +47,23 @@ class ToolAction(str, Enum):
     RUN_QUERY = "run_query"
     CALL_API = "call_api"
 
+    # Multimodal & Customer Refund Specialist Actions
+    READ_PRODUCT_IMAGE = "read_product_image"
+    ANALYZE_DAMAGE = "analyze_damage"
+    READ_INVOICE_PDF = "read_invoice_pdf"
+    EXTRACT_INVOICE_DETAILS = "extract_invoice_details"
+    TRANSCRIBE_CUSTOMER_AUDIO = "transcribe_customer_audio"
+    LOOKUP_ORDER = "lookup_order"
+    CHECK_RETURN_ELIGIBILITY = "check_return_eligibility"
+    CREATE_REFUND = "create_refund"
+    CREATE_REPLACEMENT = "create_replacement"
+    SEND_CUSTOMER_UPDATE = "send_customer_update"
+
+    # General-Purpose Meeting Room & Scheduling Actions
+    SEARCH_MEETING_ROOMS = "search_meeting_rooms"
+    CREATE_RESERVATION = "create_reservation"
+    SEND_MEETING_INVITE = "send_meeting_invite"
+
 
 class ResourceSensitivity(str, Enum):
     """Sensitivity classification for registered resources."""

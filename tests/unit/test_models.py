@@ -68,10 +68,13 @@ class TestRiskLevel:
 
 class TestToolAction:
     def test_all_actions(self):
-        assert set(ToolAction) == {
+        core_actions = {
             ToolAction.READ_FILE, ToolAction.SEND_EMAIL,
             ToolAction.RUN_QUERY, ToolAction.CALL_API,
         }
+        assert core_actions.issubset(set(ToolAction))
+        assert ToolAction.READ_PRODUCT_IMAGE in ToolAction
+        assert ToolAction.CREATE_REFUND in ToolAction
 
     def test_values(self):
         assert ToolAction.READ_FILE.value == "read_file"

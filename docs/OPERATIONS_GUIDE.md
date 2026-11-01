@@ -139,7 +139,19 @@ Streams immutable audit entries for external SIEM or WORM storage ingestion:
 python -m aura.cli --export-jsonl audit_export.jsonl
 ```
 
-### 3.4 Approving Pending Operations
+### 3.4 Running the Multi-Agent Orchestration CLI
+Renders the Rich terminal visual interface, inspecting agent identities, tool assignments, collaborative workflows, and real-time security blocks:
+```bash
+python -m aura.cli --multi-agent
+```
+
+### 3.5 Running Live Autonomous Agents with Google Gemini
+Executes an autonomous agent task powered by `gemini-2.5-flash` under AURA's strict manual tool dispatch:
+```bash
+python -m aura.cli --task "Read public/readme and summarize it"
+```
+
+### 3.6 Approving Pending Operations
 Resolves an outstanding approval request by its ID:
 ```bash
 python -m aura.cli --approve apr-a1b2c3d4 --user compliance_officer

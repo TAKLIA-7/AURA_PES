@@ -25,6 +25,7 @@ from aura.models import (
     AuraResult,
     Decision,
     RunContext,
+    TaintState,
     ToolAction,
 )
 
@@ -74,6 +75,141 @@ class ScriptedLLMClient(LLMClient):
         return LLMResponse(content="Task completed.")
 
 
+class GeminiLLMClient(LLMClient):
+    """Google Gemini LLM client for autonomous agent reasoning with manual tool dispatch."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model_name: str = "gemini-2.5-flash",
+    ) -> None:
+        import os
+
+        self._api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
+        self.model_name = model_name
+
+    def generate(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> LLMResponse:
+        """Call Gemini to reason and propose next actions or final answer."""
+        if not self._api_key:
+            return LLMResponse(
+                content="Error: GEMINI_API_KEY is not configured in .env or environment.",
+                tool_calls=[],
+            )
+
+        try:
+            from google import genai
+            from google.genai import types
+
+            client = genai.Client(api_key=self._api_key)
+
+            # Build Function Declarations from tool schemas
+            function_declarations = []
+            for t in tools:
+                decl = types.FunctionDeclaration(
+                    name=t["name"],
+                    description=t.get("description", ""),
+                    parameters_json_schema=t.get("parameters", {}),
+                )
+                function_declarations.append(decl)
+
+            genai_tools = (
+                [types.Tool(function_declarations=function_declarations)]
+                if function_declarations
+                else None
+            )
+
+            # Convert message history to Gemini contents
+            system_instruction = None
+            contents: list[types.Content] = []
+
+            for msg in messages:
+                role = msg.get("role")
+                content_text = msg.get("content") or ""
+
+                if role == "system":
+                    system_instruction = content_text
+                elif role == "user":
+                    contents.append(
+                        types.Content(
+                            role="user",
+                            parts=[types.Part.from_text(text=content_text)],
+                        )
+                    )
+                elif role == "assistant":
+                    parts = []
+                    if content_text:
+                        parts.append(types.Part.from_text(text=content_text))
+                    tool_calls_raw = msg.get("tool_calls", [])
+                    for tc in tool_calls_raw:
+                        parts.append(
+                            types.Part.from_function_call(
+                                name=tc.get("tool_name", "unknown"),
+                                args=tc.get("arguments", {}),
+                            )
+                        )
+                    if not parts:
+                        parts.append(types.Part.from_text(text=""))
+                    contents.append(types.Content(role="model", parts=parts))
+                elif role == "tool":
+                    tool_name = msg.get("tool_call_id") or "tool"
+                    contents.append(
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_function_response(
+                                    name=tool_name,
+                                    response={"output": content_text},
+                                )
+                            ],
+                        )
+                    )
+
+            config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                tools=genai_tools,
+                temperature=0.2,
+            )
+
+            response = client.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=config,
+            )
+
+            tool_calls: list[ToolCallProposal] = []
+            text_content = ""
+
+            if response.function_calls:
+                for fc in response.function_calls:
+                    tool_calls.append(
+                        ToolCallProposal(
+                            call_id=fc.name,
+                            tool_name=fc.name,
+                            arguments=dict(fc.args) if fc.args else {},
+                        )
+                    )
+            elif response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                text_parts = [p.text for p in response.candidates[0].content.parts if getattr(p, "text", None)]
+                text_content = " ".join(text_parts)
+            else:
+                text_content = response.text or ""
+
+            return LLMResponse(
+                content=text_content,
+                tool_calls=tool_calls,
+            )
+
+        except Exception as exc:
+            return LLMResponse(
+                content=f"Gemini API Error: {exc}",
+                tool_calls=[],
+            )
+
+
 class AgentRunResult(BaseModel):
     """Summary of a bounded agent run."""
     run_id: str
@@ -107,6 +243,7 @@ class AgentLoop:
         goal: str,
         agent: AgentIdentity,
         run_id: str | None = None,
+        initial_taint: TaintState | None = None,
     ) -> AgentRunResult:
         """Execute the bounded agent loop for *goal* under *agent* RBAC."""
         active_run_id = run_id or f"run-{uuid.uuid4().hex[:8]}"
@@ -128,9 +265,11 @@ class AgentLoop:
         )
         run_ctx = RunContext(
             request=dummy_req,
+            trace_id=active_run_id,
             deadline=deadline,
             max_steps=self.max_steps,
             max_duration_seconds=self.max_duration_seconds,
+            taint=initial_taint.model_copy() if initial_taint else TaintState(),
         )
 
         steps_taken = 0

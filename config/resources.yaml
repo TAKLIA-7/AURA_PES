@@ -58,3 +58,45 @@ resources:
     resource_type: api
     description: "Internal deployment trigger — sensitive"
 
+  # ── Customer Refund & Multimodal Case Evidence ──
+  photo-5521.jpg:
+    sensitivity: public
+    resource_type: image
+    description: "Customer photo evidence showing damaged blender"
+
+  invoice-8834.pdf:
+    sensitivity: internal
+    resource_type: document
+    description: "Customer invoice PDF for order ORD-9921"
+
+  voice-2210.mp3:
+    sensitivity: internal
+    resource_type: audio
+    description: "Customer voice recording describing broken blender"
+
+  ORD-9921:
+    sensitivity: internal
+    resource_type: order
+    description: "Authoritative customer order record for Vortex Blender Pro 9000"
+
+  ORD-1002:
+    sensitivity: internal
+    resource_type: order
+    description: "Authoritative customer order record for Espresso Master 200"
+
+  # ── Meeting Room Resources ──
+  rooms/maple:
+    sensitivity: internal
+    resource_type: room
+    description: "Maple Conference Room (Cap: 6, AV/Whiteboard, $40/hr)"
+
+  rooms/oak:
+    sensitivity: internal
+    resource_type: room
+    description: "Oak Executive Suite (Cap: 4, Video Conf, $65/hr)"
+
+  rooms/pine:
+    sensitivity: internal
+    resource_type: room
+    description: "Pine Huddle Room (Cap: 4, Whiteboard, $35/hr)"
+

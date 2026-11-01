@@ -10,14 +10,61 @@ agents:
       - action: "*"
         resources: ["*"]
 
+  coordinator_agent:
+    role: coordinator
+    description: "General-Purpose Coordinator Agent responsible for task interpretation, planning, and delegation"
+    permissions:
+      - action: read_file
+        resources: ["public/*", "internal/*"]
+
+  researcher_agent:
+    role: researcher
+    description: "Research & Retrieval Agent for reading documents, querying databases, and verifying resources"
+    permissions:
+      - action: read_file
+        resources: ["public/*", "internal/*"]
+      - action: run_query
+        resources: ["*"]
+      - action: search_meeting_rooms
+        resources: ["*"]
+      - action: read_invoice_pdf
+        resources: ["*"]
+      - action: read_product_image
+        resources: ["*"]
+      - action: lookup_order
+        resources: ["*"]
+
   analyst_agent:
     role: analyst
-    description: "Read-only analyst with query access to internal resources"
+    description: "Analysis & Validation Agent for comparing options, checking constraints, and synthesizing findings"
     permissions:
       - action: read_file
         resources: ["public/*", "internal/*"]
       - action: run_query
         resources: ["reports/*", "analytics/*"]
+      - action: search_meeting_rooms
+        resources: ["*"]
+      - action: check_return_eligibility
+        resources: ["*"]
+
+  executor_agent:
+    role: executor
+    description: "Execution & Communication Agent for executing authorized operations and sending notifications"
+    permissions:
+      - action: create_reservation
+        resources: ["rooms/*", "*"]
+      - action: send_meeting_invite
+        resources: ["*"]
+      - action: send_email
+        resources: ["*"]
+      - action: send_customer_update
+        resources: ["*"]
+      - action: create_refund
+        resources: ["*"]
+      - action: create_replacement
+        resources: ["*"]
+      - action: call_api
+        resources: ["*"]
 
   reader_agent:
     role: reader
@@ -34,4 +81,64 @@ agents:
         resources: ["*"]
       - action: read_file
         resources: ["public/*"]
+
+  image_agent:
+    role: image_inspector
+    description: "Image Inspection Agent for product photo reading and damage assessment"
+    permissions:
+      - action: read_product_image
+        resources: ["*"]
+      - action: analyze_damage
+        resources: ["*"]
+
+  invoice_agent:
+    role: invoice_processor
+    description: "Invoice Processing Agent for customer invoice PDF ingestion and extraction"
+    permissions:
+      - action: read_invoice_pdf
+        resources: ["*"]
+      - action: extract_invoice_details
+        resources: ["*"]
+
+  audio_agent:
+    role: audio_processor
+    description: "Audio Processing Agent for customer voice recording transcription"
+    permissions:
+      - action: transcribe_customer_audio
+        resources: ["*"]
+
+  order_agent:
+    role: order_verifier
+    description: "Order Verification Agent for order retrieval and eligibility rule verification"
+    permissions:
+      - action: lookup_order
+        resources: ["*"]
+      - action: check_return_eligibility
+        resources: ["*"]
+
+  resolution_agent:
+    role: resolution_specialist
+    description: "Resolution Agent for case assessment synthesis and recommendation"
+    permissions:
+      - action: lookup_order
+        resources: ["*"]
+      - action: check_return_eligibility
+        resources: ["*"]
+      - action: create_refund
+        resources: ["*"]
+      - action: create_replacement
+        resources: ["*"]
+      - action: send_customer_update
+        resources: ["*"]
+
+  fulfillment_agent:
+    role: fulfillment_specialist
+    description: "Fulfillment Agent executing authorized refunds, replacements, and customer updates"
+    permissions:
+      - action: create_refund
+        resources: ["*"]
+      - action: create_replacement
+        resources: ["*"]
+      - action: send_customer_update
+        resources: ["*"]
 

@@ -157,8 +157,13 @@ class ResourceExistenceRule(Rule):
         request: AuraRequest,
         context: RunContext,
     ) -> RuleResult | None:
-        # Email recipients are communication endpoints, not cataloged resources
-        if request.action == ToolAction.SEND_EMAIL:
+        # Communication endpoints and search queries are not cataloged storage resources
+        if request.action in (
+            ToolAction.SEND_EMAIL,
+            ToolAction.SEND_CUSTOMER_UPDATE,
+            ToolAction.SEND_MEETING_INVITE,
+            ToolAction.SEARCH_MEETING_ROOMS,
+        ):
             return None
 
         resource_id = _extract_resource_id(request)
@@ -255,6 +260,8 @@ class ConfidentialEgressRule(Rule):
     EGRESS_ACTIONS: frozenset[ToolAction] = frozenset({
         ToolAction.SEND_EMAIL,
         ToolAction.CALL_API,
+        ToolAction.SEND_CUSTOMER_UPDATE,
+        ToolAction.SEND_MEETING_INVITE,
     })
 
     def __init__(
@@ -343,29 +350,74 @@ class RateLimitRule(Rule):
         )
 
 
+class ApprovalRequiredRule(Rule):
+    """Enforces mandatory human-in-the-loop approval for financial and order mutation actions."""
+
+    def __init__(
+        self,
+        rule_id: str = "approval_required",
+        *,
+        approval_actions: set[ToolAction] | None = None,
+        enabled: bool = True,
+    ) -> None:
+        super().__init__(rule_id, enabled=enabled)
+        self.approval_actions = approval_actions or {
+            ToolAction.CREATE_REFUND,
+            ToolAction.CREATE_REPLACEMENT,
+            ToolAction.CREATE_RESERVATION,
+        }
+
+    def evaluate(
+        self,
+        request: AuraRequest,
+        context: RunContext,
+    ) -> RuleResult | None:
+        if request.action in self.approval_actions:
+            return RuleResult(
+                rule_id=self.rule_id,
+                decision=Decision.APPROVAL,
+                risk_level=RiskLevel.HIGH,
+                reason_code="APPROVAL_REQUIRED",
+                reason_detail=f"Operation '{request.action.value}' requires human-in-the-loop approval",
+            )
+        return None
+
+
 # ────────────────────────────────────────────────────────────────────
 # Helpers
 # ────────────────────────────────────────────────────────────────────
 
 def _extract_resource_id(request: AuraRequest) -> str:
-    """Extract the target resource identifier from request params.
-
-    The mapping depends on the action type:
-      - read_file  → params["doc_id"]
-      - send_email → params.get("to", "")  (recipient is the "resource")
-      - run_query  → params["query_name"]
-      - call_api   → params["op"]
-    """
+    """Extract the target resource identifier from request params."""
     action = request.action
     params = request.params
 
-    if action == ToolAction.READ_FILE:
+    if action in (ToolAction.READ_FILE, ToolAction.READ_INVOICE_PDF, ToolAction.EXTRACT_INVOICE_DETAILS):
         return str(params.get("doc_id", ""))
+    elif action in (ToolAction.READ_PRODUCT_IMAGE, ToolAction.ANALYZE_DAMAGE):
+        return str(params.get("image_id", ""))
+    elif action == ToolAction.TRANSCRIBE_CUSTOMER_AUDIO:
+        return str(params.get("audio_id", ""))
+    elif action in (
+        ToolAction.LOOKUP_ORDER,
+        ToolAction.CHECK_RETURN_ELIGIBILITY,
+        ToolAction.CREATE_REFUND,
+        ToolAction.CREATE_REPLACEMENT,
+    ):
+        return str(params.get("order_id", ""))
     elif action == ToolAction.SEND_EMAIL:
         return str(params.get("to", ""))
+    elif action == ToolAction.SEND_CUSTOMER_UPDATE:
+        return str(params.get("email", ""))
     elif action == ToolAction.RUN_QUERY:
         return str(params.get("query_name", ""))
     elif action == ToolAction.CALL_API:
         return str(params.get("op", ""))
+    elif action == ToolAction.CREATE_RESERVATION:
+        return str(params.get("room_id", ""))
+    elif action == ToolAction.SEND_MEETING_INVITE:
+        return str(params.get("to_emails", ""))
+    elif action == ToolAction.SEARCH_MEETING_ROOMS:
+        return str(params.get("location", ""))
     return ""
 

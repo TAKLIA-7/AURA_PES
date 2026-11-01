@@ -35,13 +35,15 @@ from aura.rate_limit import RateLimiter
 from aura.rbac import RBACManager
 from aura.resources import ResourceRegistry
 from aura.rules import (
+    ApprovalRequiredRule,
     ConfidentialEgressRule,
     PermissionCheckRule,
     RateLimitRule,
     ResourceExistenceRule,
     TaintPropagationRule,
 )
-from aura.store import AuraStore, IdempotencyConflictError
+from aura.store import AuraStore, ExternalOutcomeUnknownError, IdempotencyConflictError
+from aura.telemetry import OperationMetrics, TelemetryCollector
 from aura.tools import ToolRegistry
 
 if TYPE_CHECKING:
@@ -60,6 +62,7 @@ class AuraGateway:
         store: AuraStore | None = None,
         audit_logger: AuditLogger | None = None,
         approval_manager: ApprovalManager | None = None,
+        telemetry: TelemetryCollector | None = None,
     ) -> None:
         self.policy_engine = policy_engine
         self.tool_registry = tool_registry
@@ -68,6 +71,19 @@ class AuraGateway:
         self.store = store or AuraStore()
         self.audit_logger = audit_logger or AuditLogger(self.store)
         self.approval_manager = approval_manager or ApprovalManager(self.store)
+        self.telemetry = telemetry or TelemetryCollector()
+        self._rbac_manager: RBACManager | None = None
+        self._resource_registry: ResourceRegistry | None = None
+
+    @property
+    def rbac_manager(self) -> RBACManager | None:
+        """Access the RBAC manager associated with the gateway."""
+        if self._rbac_manager is not None:
+            return self._rbac_manager
+        for rule in self.policy_engine._rules:
+            if hasattr(rule, "rbac_manager"):
+                return rule.rbac_manager
+        return None
 
     @classmethod
     def create_default(
@@ -75,15 +91,18 @@ class AuraGateway:
         config_dir: str = "config",
         jev_provider: JEVProvider | None = None,
         db_path: str | Path = ":memory:",
+        use_gemini: bool = False,
     ) -> AuraGateway:
         """Create a fully configured gateway from YAML config files and SQLite store."""
         from pathlib import Path
+
         cfg_path = Path(config_dir)
 
         rbac_mgr = RBACManager.from_yaml(cfg_path / "agents.yaml")
         registry = ResourceRegistry.from_yaml(cfg_path / "resources.yaml")
 
         import yaml
+
         with open(cfg_path / "policy.yaml", "r", encoding="utf-8") as f:
             policy_yaml = yaml.safe_load(f)
 
@@ -95,6 +114,7 @@ class AuraGateway:
             TaintPropagationRule(),
             ConfidentialEgressRule(),
             RateLimitRule(rate_limiter=rate_limiter),
+            ApprovalRequiredRule(),
         ]
 
         policy_engine = PolicyEngine(
@@ -104,14 +124,20 @@ class AuraGateway:
         tools = ToolRegistry.create_default()
 
         if jev_provider is None:
-            from aura.jev.mock import MockJEVProvider
-            jev_provider = MockJEVProvider()
+            if use_gemini:
+                from aura.jev.gemini import GeminiJEVProvider
+
+                jev_provider = GeminiJEVProvider()
+            else:
+                from aura.jev.mock import MockJEVProvider
+
+                jev_provider = MockJEVProvider()
 
         store = AuraStore(db_path=db_path)
         audit_logger = AuditLogger(store)
         approval_mgr = ApprovalManager(store)
 
-        return cls(
+        gw = cls(
             policy_engine=policy_engine,
             tool_registry=tools,
             jev_provider=jev_provider,
@@ -120,6 +146,9 @@ class AuraGateway:
             audit_logger=audit_logger,
             approval_manager=approval_mgr,
         )
+        gw._rbac_manager = rbac_mgr
+        gw._resource_registry = registry
+        return gw
 
     def handle(self, request: AuraRequest, run_ctx: RunContext) -> AuraResult:
         """Handle a single protected tool call."""
@@ -295,6 +324,16 @@ class AuraGateway:
                     execution_result=output,
                     execution_status="success",
                 )
+            except ExternalOutcomeUnknownError as exc:
+                result = AuraResult(
+                    request_id=request.request_id,
+                    decision=Decision.ALLOW,
+                    risk_level=current_risk,
+                    policy_decision=policy_decision,
+                    jev_result=jev_result,
+                    execution_status="unknown",
+                    error=f"EXTERNAL_OUTCOME_UNKNOWN: {str(exc)}",
+                )
             except Exception as exc:
                 result = AuraResult(
                     request_id=request.request_id,
@@ -374,6 +413,14 @@ class AuraGateway:
                 execution_result=output,
                 execution_status="success",
             )
+        except ExternalOutcomeUnknownError as exc:
+            res = AuraResult(
+                request_id=record.request_id,
+                decision=Decision.ALLOW,
+                risk_level=RiskLevel.HIGH,
+                execution_status="unknown",
+                error=f"EXTERNAL_OUTCOME_UNKNOWN: {exc}",
+            )
         except Exception as exc:
             res = AuraResult(
                 request_id=record.request_id,
@@ -386,6 +433,7 @@ class AuraGateway:
         # Create AuraRequest representation for durable audit log
         exec_request = AuraRequest(
             request_id=record.request_id,
+            trace_id=run_ctx.request.trace_id if (run_ctx and run_ctx.request) else None,
             action=consumed_rec.action,
             params=consumed_rec.stored_params,
             agent=claiming_agent,
@@ -440,5 +488,17 @@ class AuraGateway:
                     status="FAILED",
                     result=result.model_dump(mode="json"),
                 )
+
+        if hasattr(self, "telemetry") and self.telemetry:
+            self.telemetry.record(
+                OperationMetrics(
+                    trace_id=request.trace_id or request.request_id,
+                    action=request.action.value,
+                    agent_id=request.agent.agent_id if request.agent else "unknown",
+                    decision=result.decision.value,
+                    fast_path=True,
+                    total_duration_ms=duration_ms,
+                )
+            )
 
         return result

@@ -48,4 +48,17 @@ policy:
       analyst: 60
       reader: 30
       mailer: 20
+      coordinator: 60
+      image_inspector: 60
+      invoice_processor: 60
+      audio_processor: 60
+      order_verifier: 60
+      resolution_specialist: 60
+      fulfillment_specialist: 40
+
+  # Operations requiring explicit human approval
+  approval_required_actions:
+    - create_refund
+    - create_replacement
+    - api/internal_deploy
 
